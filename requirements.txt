@@ -1,0 +1,21 @@
+# --- Audio Processing & Math ---
+numpy
+scipy
+pandas
+librosa
+soundfile
+
+# --- Machine Learning & Models ---
+scikit-learn
+joblib
+birdnetlib
+tensorflow  # Required by birdnetlib for the actual inference
+
+# --- Visualization & Utilities ---
+matplotlib
+seaborn
+tqdm
+
+# --- Geospatial & Time ---
+astral
+pytz

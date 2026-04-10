@@ -1,0 +1,31 @@
+[
+  {
+    "id": "acoustic_indices",
+    "name": "2. Eco-Acoustic Indices (ADI, ACI, etc.)",
+    "script_file": "indices.py",
+    "description": "Calculates biodiversity indices from the audio spectra.",
+    "inputs": [
+      {
+        "type": "spot_date_range",
+        "label": "Select Spot & Date Range"
+      }
+    ],
+    "depends_on": [],
+    "parameters": [
+      {
+        "id": "sampling_rule",
+        "label": "Sampling Rule",
+        "type": "select",
+        "options": ["2R4W", "5R5W", "30R30W"],
+        "default": "2R4W"
+      }
+    ],
+    "assets": [
+      "static_noise.wav", 
+      "rainfall_model.joblib", 
+      "label_encoder.joblib", 
+      "master_rainfall_model.joblib", 
+      "master_label_encoder.joblib"
+    ]
+  }
+]

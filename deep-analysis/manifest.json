@@ -1,0 +1,17 @@
+[
+  {
+    "id": "deep_analysis",
+    "name": "3. Deep Ecological Analysis",
+    "script_file": "analysis.py",
+    "description": "Correlates bird detections with weather and computes stickiness.",
+    "inputs": [
+      {
+        "type": "spot_date_range",
+        "label": "Select Spot & Date Range"
+      }
+    ],
+    "depends_on": ["birdnet_predictions.py"],
+    "parameters": [],
+    "assets": []
+  }
+]

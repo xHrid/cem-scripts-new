@@ -1,0 +1,25 @@
+[
+  {
+    "id": "birdnet_inference",
+    "name": "1. BirdNET Acoustic Inference",
+    "script_file": "birdnet_predictions.py",
+    "description": "Runs heavy ML inference to detect bird species from audio.",
+    "inputs": [
+      {
+        "type": "spot_date_range",
+        "label": "Select Spot & Date Range"
+      }
+    ],
+    "depends_on": [],
+    "parameters": [
+      {
+        "id": "sampling_rule",
+        "label": "Sampling Rule",
+        "type": "select",
+        "options": ["2R4W", "5R5W", "30R30W"],
+        "default": "2R4W"
+      }
+    ],
+    "assets": ["static_noise.wav"]
+  }
+]
