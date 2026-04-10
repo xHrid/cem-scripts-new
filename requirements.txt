@@ -9,7 +9,8 @@ soundfile
 scikit-learn
 joblib
 birdnetlib
-tensorflow  # Required by birdnetlib for the actual inference
+tensorflow
+tflite-runtime
 
 # --- Visualization & Utilities ---
 matplotlib
