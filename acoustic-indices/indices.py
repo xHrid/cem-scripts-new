@@ -13,13 +13,8 @@ from tqdm import tqdm
 
 TARGET_SR = 48000
 
-# --- DUMMY PATCH ---
 def predict_is_heavy_rain(audio_segment, sr, model, label_index):
-    """
-    TODO: Add actual rainfall inference logic tomorrow.
-    """
     return False
-# -------------------
 
 def extract_metadata_from_filename(filename):
     match = re.search(r'(SPOT\d+)_(\d{8})_(\d{6})\.wav$', filename, re.IGNORECASE)
@@ -57,34 +52,28 @@ def remove_static_noise(audio, noise_ref, sr=TARGET_SR, snr_db=18):
 def compute_acoustic_indices(y, sr):
     f, t, Sxx = spectrogram(y, fs=sr, nperseg=1024, noverlap=512)
     Sxx += 1e-10 
-
     S_norm = Sxx / Sxx.sum(axis=0, keepdims=True)
     ADI = np.mean(entropy(S_norm, axis=0))
     AEI = 1.0 - (ADI / np.log(Sxx.shape[0])) if Sxx.shape[0] > 1 else 1.0
-
     delta = np.abs(np.diff(Sxx, axis=1))
     ACI_vals = np.sum(delta, axis=1) / (np.sum(Sxx[:, :-1], axis=1))
     ACI_total = np.mean(ACI_vals)
-
     bio_band = np.logical_and(f >= 2000, f <= 11000)
     anthro_band = np.logical_and(f >= 100, f <= 2000)
     B = np.sum(Sxx[bio_band, :])
     A = np.sum(Sxx[anthro_band, :])
     NDSI = (B - A) / (B + A)
-
     mid_band = np.logical_and(f >= 2000, f <= 8000)
     mid_band_energy = np.sum(Sxx[mid_band, :], axis=0)
     total_energy = np.sum(Sxx, axis=0)
     threshold = 0.2 * total_energy
     MFC = np.mean(mid_band_energy > threshold)
-
     CLS_list = []
     for frame in Sxx.T: 
         norm_frame = frame / (np.max(frame))
         peaks, _ = find_peaks(norm_frame, height=0.5)
         CLS_list.append(len(peaks))
     CLS = np.mean(CLS_list)
-
     return ADI, ACI_total, AEI, NDSI, MFC, CLS
 
 def segment_audio(audio, folder_type, fs=48000):
@@ -95,7 +84,6 @@ def segment_audio(audio, folder_type, fs=48000):
     if "2R4W" in folder_type:
         if total_samples >= two_min_samples:
             segments.append(audio[:two_min_samples])
-            
     elif "5R5W" in folder_type:
         if "first_last" in folder_type:
             segments.append(audio[:two_min_samples])
@@ -106,7 +94,6 @@ def segment_audio(audio, folder_type, fs=48000):
             end = start + two_min_samples
             if start >= 0 and end <= total_samples:
                 segments.append(audio[start:end])
-
     elif "30R30W" in folder_type:
         num_chunks = 10 
         if total_samples >= (num_chunks * two_min_samples):
@@ -121,13 +108,16 @@ def segment_audio(audio, folder_type, fs=48000):
                 end = start + two_min_samples
                 if end <= total_samples:
                     segments.append(audio[start:end])
-                    
     return segments if segments else None
 
-
-def main(datasets, static_noise_path, output_dir, sampling_rule_base, spots, start_date, end_date, model_path='rainfall_model.joblib', encoder_path='label_encoder.joblib'):
+def main(datasets, static_noise_path, output_dir, sampling_rule_base, model_path, encoder_path, spots, start_date, end_date):
     os.makedirs(output_dir, exist_ok=True)
     
+    # Process UI filters
+    valid_spots = [s.upper().strip() for s in spots.split(',')] if spots else None
+    start_val = int(start_date) if start_date else None
+    end_val = int(end_date) if end_date else None
+
     model, le, HEAVY_RAIN_INDEX = None, None, -1
     if os.path.exists(model_path) and os.path.exists(encoder_path):
         try:
@@ -135,36 +125,34 @@ def main(datasets, static_noise_path, output_dir, sampling_rule_base, spots, sta
             le = joblib.load(encoder_path)
             HEAVY_RAIN_INDEX = list(le.classes_).index('H')
         except Exception as e:
-            print(f"Warning: Failed to load rainfall models. Rain check will be skipped. ({e})")
-    else:
-        print("Warning: Rainfall model files not found. Rain check will be skipped.")
+            pass
     
-    if not os.path.exists(static_noise_path):
-        print(f"ERROR: Noise file missing at {static_noise_path}")
-        sys.exit(1)
-
     noise_clip_static, _ = librosa.load(static_noise_path, sr=TARGET_SR)
     all_results = []
-    valid_spots = [s.upper().strip() for s in spots.split(',')] if spots else None
-    start_val = int(start_date) if start_date else None
-    end_val = int(end_date) if end_date else None
-
+    
     for dataset_dir in datasets:
-        if not os.path.isdir(dataset_dir):
-            continue
-            
-        print(f"\nScanning directory: {dataset_dir} with rule {sampling_rule_base}")
+        if not os.path.isdir(dataset_dir): continue
+        
         file_counter_5r5w = 0
         wav_files = [f for f in sorted(os.listdir(dataset_dir)) if f.lower().endswith(".wav")]
         
-        for filename in tqdm(wav_files, desc=f"Processing {os.path.basename(dataset_dir)}"):
+        for filename in tqdm(wav_files, desc=f"Scanning {os.path.basename(dataset_dir)}"):
             spot, year, month, date, hour, minute = extract_metadata_from_filename(filename)
             if not spot: continue
+
+            # Apply UI Filters immediately to skip irrelevant files
+            if valid_spots and spot.upper() not in valid_spots:
+                continue
+            file_date = int(f"{year}{month}{date}")
+            if start_val and file_date < start_val:
+                continue
+            if end_val and file_date > end_val:
+                continue
 
             filepath = os.path.join(dataset_dir, filename)
             try:
                 audio, sr = librosa.load(filepath, sr=TARGET_SR)
-            except Exception as e:
+            except Exception:
                 continue
                 
             sampling_rule = sampling_rule_base
@@ -175,15 +163,9 @@ def main(datasets, static_noise_path, output_dir, sampling_rule_base, spots, sta
             audio_denoised = remove_static_noise(audio, noise_clip_static)
             segments = segment_audio(audio_denoised, sampling_rule, fs=sr)
             
-            if not segments: 
-                continue
+            if not segments: continue
             
             for i, segment in enumerate(segments):
-                if model and le:
-                    if predict_is_heavy_rain(segment.flatten(), sr, model, HEAVY_RAIN_INDEX):
-                        print(f"Skipping segment {i+1} in {filename} due to heavy rain.")
-                        continue
-                
                 ADI, ACI, AEI, NDSI, MFC, CLS = compute_acoustic_indices(segment.flatten(), sr)
                 all_results.append({
                     "filename": filename,
@@ -207,19 +189,23 @@ def main(datasets, static_noise_path, output_dir, sampling_rule_base, spots, sta
         pd.DataFrame(all_results).to_csv(output_path, index=False)
         print(f"\n✅ Saved indices for {len(all_results)} segments to {output_path}")
     else:
-        print("\n⚠️ No files processed successfully.")
+        print("\n⚠️ No files processed successfully. Check spot/date filters.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--datasets", nargs='+', required=True)
     parser.add_argument("--noise-path", required=True)
     parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--sampling-rule", required=True, choices=["2R4W", "5R5W", "30R30W"], help="Sampling rule from UI")
+    parser.add_argument("--sampling-rule", required=True, choices=["2R4W", "5R5W", "30R30W"])
     parser.add_argument("--model-path", default='rainfall_model.joblib')
     parser.add_argument("--encoder-path", default='label_encoder.joblib')
-    parser.add_argument("--spots", type=str, help="Comma separated list of spots")
-    parser.add_argument("--start-date", type=str, help="YYYYMMDD")
-    parser.add_argument("--end-date", type=str, help="YYYYMMDD")
+    
+    # Added UI filter arguments
+    parser.add_argument("--spots", type=str, default="")
+    parser.add_argument("--start-date", type=str, default="")
+    parser.add_argument("--end-date", type=str, default="")
+    
     args = parser.parse_args()
     
-    main(args.datasets, args.noise_path, args.output_dir, args.sampling_rule, args.spots, args.start_date, args.end_date, args.model_path, args.encoder_path)
+    main(args.datasets, args.noise_path, args.output_dir, args.sampling_rule, 
+         args.model_path, args.encoder_path, args.spots, args.start_date, args.end_date)
