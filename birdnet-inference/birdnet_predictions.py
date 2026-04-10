@@ -102,7 +102,7 @@ def analyze_bird_audio(audio_path, lat, lon):
         df = df.rename(columns={"start": "start_time", "end": "end_time"})
     return df
 
-def main(datasets, static_noise_path, output_dir, sampling_rule_base, lat=28.53, lon=77.18, target_sr=48000, snr_db=18):
+def main(datasets, static_noise_path, output_dir, sampling_rule_base, spots, start_date, end_date, lat=28.53, lon=77.18, target_sr=48000, snr_db=18):
     os.makedirs(output_dir, exist_ok=True)
     
     if not os.path.exists(static_noise_path):
@@ -111,6 +111,10 @@ def main(datasets, static_noise_path, output_dir, sampling_rule_base, lat=28.53,
         
     noise_clip, _ = librosa.load(static_noise_path, sr=target_sr)
     all_detections = []
+
+    valid_spots = [s.upper().strip() for s in spots.split(',')] if spots else None
+    start_val = int(start_date) if start_date else None
+    end_val = int(end_date) if end_date else None
     
     for dataset_dir in datasets:
         if not os.path.isdir(dataset_dir):
@@ -127,6 +131,15 @@ def main(datasets, static_noise_path, output_dir, sampling_rule_base, lat=28.53,
             
             if not spot:
                 print(f"Skipping {fname} - Does not match expected CEM filename convention.")
+                continue
+
+            if valid_spots and spot.upper() not in valid_spots:
+                continue
+                
+            file_date = int(f"{year}{month}{day}")
+            if start_val and file_date < start_val:
+                continue
+            if end_val and file_date > end_val:
                 continue
 
             filepath = os.path.join(dataset_dir, fname)
@@ -200,6 +213,9 @@ if __name__ == "__main__":
     parser.add_argument("--lon", type=float, default=77.18)
     parser.add_argument("--sample-rate", type=int, default=48000)
     parser.add_argument("--snr-db", type=int, default=18)
+    parser.add_argument("--spots", type=str, help="Comma separated list of spots")
+    parser.add_argument("--start-date", type=str, help="YYYYMMDD")
+    parser.add_argument("--end-date", type=str, help="YYYYMMDD")
     args = parser.parse_args()
     
-    main(args.datasets, args.noise_path, args.output_dir, args.sampling_rule, args.lat, args.lon, args.sample_rate, args.snr_db)
+    main(args.datasets, args.noise_path, args.output_dir, args.sampling_rule,  args.spots, args.start_date, args.end_date, args.lat, args.lon, args.sample_rate, args.snr_db)

@@ -125,7 +125,7 @@ def segment_audio(audio, folder_type, fs=48000):
     return segments if segments else None
 
 
-def main(datasets, static_noise_path, output_dir, sampling_rule_base, model_path='rainfall_model.joblib', encoder_path='label_encoder.joblib'):
+def main(datasets, static_noise_path, output_dir, sampling_rule_base, spots, start_date, end_date, model_path='rainfall_model.joblib', encoder_path='label_encoder.joblib'):
     os.makedirs(output_dir, exist_ok=True)
     
     model, le, HEAVY_RAIN_INDEX = None, None, -1
@@ -145,7 +145,10 @@ def main(datasets, static_noise_path, output_dir, sampling_rule_base, model_path
 
     noise_clip_static, _ = librosa.load(static_noise_path, sr=TARGET_SR)
     all_results = []
-    
+    valid_spots = [s.upper().strip() for s in spots.split(',')] if spots else None
+    start_val = int(start_date) if start_date else None
+    end_val = int(end_date) if end_date else None
+
     for dataset_dir in datasets:
         if not os.path.isdir(dataset_dir):
             continue
@@ -214,6 +217,9 @@ if __name__ == "__main__":
     parser.add_argument("--sampling-rule", required=True, choices=["2R4W", "5R5W", "30R30W"], help="Sampling rule from UI")
     parser.add_argument("--model-path", default='rainfall_model.joblib')
     parser.add_argument("--encoder-path", default='label_encoder.joblib')
+    parser.add_argument("--spots", type=str, help="Comma separated list of spots")
+    parser.add_argument("--start-date", type=str, help="YYYYMMDD")
+    parser.add_argument("--end-date", type=str, help="YYYYMMDD")
     args = parser.parse_args()
     
-    main(args.datasets, args.noise_path, args.output_dir, args.sampling_rule, args.model_path, args.encoder_path)
+    main(args.datasets, args.noise_path, args.output_dir, args.sampling_rule, args.spots, args.start_date, args.end_date, args.model_path, args.encoder_path)
