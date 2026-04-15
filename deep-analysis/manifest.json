@@ -7,7 +7,8 @@
     "inputs": [
       {
         "type": "spot_date_range",
-        "label": "Select Spot & Date Range"
+        "label": "Select Spot & Date Range",
+        "valid_extensions": [".wav"]
       }
     ],
     "depends_on": ["birdnet_predictions.py"],

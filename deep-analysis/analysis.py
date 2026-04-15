@@ -538,21 +538,63 @@ def analyze_spot_preference(results_df, output_dir):
 
     return preferred_df
 
+import glob
+
+def gather_birdnet_data(root_dir, spots, start_date, end_date):
+    """Natively hunts down completed BirdNET jobs and stitches them together."""
+    print("Gathering processed data from completed jobs...")
+    results_dir = os.path.join(root_dir, "jobs", "results")
+    valid_spots = [s.upper().strip() for s in spots.split(',')] if spots else None
+    start_val = int(start_date) if start_date else None
+    end_val = int(end_date) if end_date else None
+
+    all_dfs = []
+    # Scan all completed BirdNET jobs recursively
+    search_pattern = os.path.join(results_dir, "*", "birdnet_results.csv")
+    
+    for csv_file in glob.glob(search_pattern):
+        try:
+            df = pd.read_csv(csv_file)
+            if valid_spots and 'spot' in df.columns:
+                df = df[df['spot'].str.upper().isin(valid_spots)]
+            if 'year' in df.columns and 'month' in df.columns and 'day' in df.columns:
+                df['date_int'] = (df['year'].astype(str) + df['month'].astype(str).str.zfill(2) + df['day'].astype(str).str.zfill(2)).astype(int)
+                if start_val: df = df[df['date_int'] >= start_val]
+                if end_val: df = df[df['date_int'] <= end_val]
+            all_dfs.append(df)
+        except Exception:
+            continue
+            
+    if not all_dfs:
+        raise ValueError("No matching BirdNET data found in completed jobs for these spots and dates. Run Inference first.")
+    
+    return pd.concat(all_dfs, ignore_index=True)
 
 # ============================================================================
 # MAIN FUNCTION
 # ============================================================================
 
-def main(detection_csv, weather_csv, output_dir, lat=28.53, lon=77.18):
+def main(root_dir, spots, start_date, end_date, output_dir, detection_csv=None, weather_csv=None, lat=28.53, lon=77.18):
     """Main analysis pipeline."""
-    
     os.makedirs(output_dir, exist_ok=True)
 
-    if not os.path.exists(detection_csv):
-        print(f"ERROR: Detections CSV not found at {detection_csv}")
+    print(f"Using root dir: {root_dir}")
+    
+    # 1. Gather the data natively instead of relying on the watcher!
+    try:
+        results_df = gather_birdnet_data(root_dir, spots, start_date, end_date)
+    except Exception as e:
+        print(f"ERROR: {e}")
         sys.exit(1)
 
-    results_df, weather_df = load_and_preprocess(detection_csv, weather_csv, output_dir)
+    # Save a master copy in this job's folder so the user can view it in the UI
+    aggregated_csv_path = os.path.join(output_dir, "aggregated_detections.csv")
+    results_df.to_csv(aggregated_csv_path, index=False)
+
+    # 2. Get weather (Optional fallback)
+    weather_df = None
+    if weather_csv and os.path.exists(weather_csv):
+        weather_df = pd.read_csv(weather_csv)
 
     if len(results_df) == 0:
         print("ERROR: Detection CSV contains no valid, parsed data. Halting analysis.")
@@ -574,45 +616,32 @@ def main(detection_csv, weather_csv, output_dir, lat=28.53, lon=77.18):
     print("="*70)
     print(f"\nAll results saved to: {output_dir}")
 
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Comprehensive acoustic biodiversity analysis pipeline."
-    )
-    parser.add_argument(
-        "--detection-csv",
-        required=True,
-        help="Path to BirdNET classification CSV file"
-    )
-    parser.add_argument(
-        "--weather-csv",
-        default=None,
-        help="Path to weather data CSV file (optional)"
-    )
-    parser.add_argument(
-        "--output-dir",
-        required=True,
-        help="Output directory for analysis results"
-    )
-    parser.add_argument(
-        "--lat",
-        type=float,
-        default=28.53,
-        help="Latitude for sunrise/sunset calculations"
-    )
-    parser.add_argument(
-        "--lon",
-        type=float,
-        default=77.18,
-        help="Longitude for sunrise/sunset calculations"
-    )
+    parser = argparse.ArgumentParser(description="Comprehensive acoustic biodiversity analysis pipeline.")
+    
+    # --- NEW UI DYNAMIC PARAMETERS ---
+    parser.add_argument("--root-dir", required=True, help="Global root directory to find jobs")
+    parser.add_argument("--spots", type=str, default=None, help="Comma separated list of spots")
+    parser.add_argument("--start-date", type=str, default=None, help="YYYYMMDD")
+    parser.add_argument("--end-date", type=str, default=None, help="YYYYMMDD")
+    
+    # --- STANDARD PARAMETERS ---
+    parser.add_argument("--output-dir", required=True, help="Output directory for analysis results")
+    parser.add_argument("--detection-csv", default=None, help="Path to specific CSV (Optional now)")
+    parser.add_argument("--weather-csv", default=None, help="Path to weather data CSV file (optional)")
+    parser.add_argument("--lat", type=float, default=28.53, help="Latitude for sunrise/sunset")
+    parser.add_argument("--lon", type=float, default=77.18, help="Longitude for sunrise/sunset")
 
     args = parser.parse_args()
 
     main(
+        root_dir=args.root_dir,
+        spots=args.spots,
+        start_date=args.start_date,
+        end_date=args.end_date,
+        output_dir=args.output_dir,
         detection_csv=args.detection_csv,
         weather_csv=args.weather_csv,
-        output_dir=args.output_dir,
         lat=args.lat,
         lon=args.lon
     )

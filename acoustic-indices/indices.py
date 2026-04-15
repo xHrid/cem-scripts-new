@@ -10,6 +10,7 @@ from scipy.signal import spectrogram, find_peaks
 from scipy.stats import entropy
 import joblib
 from tqdm import tqdm
+import json
 
 TARGET_SR = 48000
 
@@ -183,10 +184,20 @@ def main(datasets, static_noise_path, output_dir, sampling_rule_base, model_path
                     "MFC": MFC,
                     "CLS": CLS
                 })
-    
+                
     if all_results:
         output_path = os.path.join(output_dir, "acoustic_indices.csv")
-        pd.DataFrame(all_results).to_csv(output_path, index=False)
+        final_df = pd.DataFrame(all_results)
+        final_df.to_csv(output_path, index=False)
+        
+        # --- NEW CACHE CREATION LOGIC ---
+        import json
+        processed_files = final_df["filename"].unique().tolist()
+        cache_path = os.path.join(output_dir, "processed.json")
+        with open(cache_path, "w") as f:
+            json.dump(processed_files, f)
+        # --------------------------------
+        
         print(f"\n✅ Saved indices for {len(all_results)} segments to {output_path}")
     else:
         print("\n⚠️ No files processed successfully. Check spot/date filters.")
@@ -200,10 +211,12 @@ if __name__ == "__main__":
     parser.add_argument("--model-path", default='rainfall_model.joblib')
     parser.add_argument("--encoder-path", default='label_encoder.joblib')
     
-    # Added UI filter arguments
     parser.add_argument("--spots", type=str, default="")
     parser.add_argument("--start-date", type=str, default="")
     parser.add_argument("--end-date", type=str, default="")
+    
+    # --- ADDED SO IT DOESN'T CRASH WHEN WATCHER PASSES IT ---
+    parser.add_argument("--root-dir", type=str, help="Global root directory", default="")
     
     args = parser.parse_args()
     

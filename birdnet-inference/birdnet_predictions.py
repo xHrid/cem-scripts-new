@@ -11,6 +11,7 @@ import tempfile
 from tqdm import tqdm
 from birdnetlib import Recording
 from birdnetlib.analyzer import Analyzer
+import json
 
 # Monkey patch for compatibility
 np.complex = complex  
@@ -194,11 +195,19 @@ def main(datasets, static_noise_path, output_dir, sampling_rule_base, spots, sta
                 finally:
                     if temp_segment_path and os.path.exists(temp_segment_path):
                         os.unlink(temp_segment_path)
-    
     if all_detections:
         output_path = os.path.join(output_dir, "birdnet_results.csv")
         final_df = pd.concat(all_detections, ignore_index=True)
         final_df.to_csv(output_path, index=False)
+        
+        # --- NEW CACHE CREATION LOGIC ---
+        import json
+        processed_files = final_df["filename"].unique().tolist()
+        cache_path = os.path.join(output_dir, "processed.json")
+        with open(cache_path, "w") as f:
+            json.dump(processed_files, f)
+        # --------------------------------
+            
         print(f"\n✅ Success! Saved {len(final_df)} detections to {output_path}")
     else:
         print("\n⚠️ No detections processed across any datasets.")
@@ -216,6 +225,10 @@ if __name__ == "__main__":
     parser.add_argument("--spots", type=str, help="Comma separated list of spots")
     parser.add_argument("--start-date", type=str, help="YYYYMMDD")
     parser.add_argument("--end-date", type=str, help="YYYYMMDD")
+    
+    # --- ADDED SO IT DOESN'T CRASH WHEN WATCHER PASSES IT ---
+    parser.add_argument("--root-dir", type=str, help="Global root directory passed by watcher", default="")
+    
     args = parser.parse_args()
     
     main(args.datasets, args.noise_path, args.output_dir, args.sampling_rule,  args.spots, args.start_date, args.end_date, args.lat, args.lon, args.sample_rate, args.snr_db)
