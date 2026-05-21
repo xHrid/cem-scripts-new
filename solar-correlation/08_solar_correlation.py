@@ -179,4 +179,67 @@ def run_solar_correlation(input_csv, output_dir):
                 '-', color='#FF8C00', linewidth=2, label='Sunrise Time')
 
         r_val = pearson_df[pearson_df['Bird'] == bird]['Pearson_Sunrise'].values[0]
-        ax.set_title(f'{bird}: Peak Activity vs Sunrise
+        ax.set_title(f'{bird}: Peak Activity vs Sunrise (r={r_val:.3f})', fontsize=14)
+        ax.set_xlabel('Date', fontsize=12)
+        ax.set_ylabel('Hour of Day', fontsize=12)
+        ax.legend()
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+
+        clean_name = bird.replace(" ", "_").lower()
+        outpath = os.path.join(output_dir, f"solar_overlay_{clean_name}.png")
+        plt.savefig(outpath, dpi=150)
+        plt.close()
+        print(f"  Saved: {outpath}")
+
+    print("\nDone. All results saved to:", output_dir)
+
+
+# =============================================================================
+# ENTRY POINT — auto-detect mode
+# =============================================================================
+
+def _resolve_dependency_aggregate(args, dep_filename):
+    """Find a dependency aggregate CSV. Priority: sibling of --aggregate-file > project DB."""
+    if args.aggregate_file:
+        agg_dir = os.path.dirname(args.aggregate_file)
+        candidate = os.path.join(agg_dir, dep_filename)
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
+def _run_watcher_mode():
+    """Aggregate-aware watcher mode for solar correlation."""
+    args = config.parse_common_args(description="08 – Solar Correlation (watcher)")
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    # Try aggregate first, fall back to legacy resolution
+    agg_path = _resolve_dependency_aggregate(args, "filtered_detections.csv")
+    if agg_path:
+        print(f"Loading from aggregate: {agg_path}")
+        df = config.load_aggregate(agg_path)
+        df = config.filter_aggregate_for_output(df, args.start_date, args.end_date, args.spots)
+        if df.empty:
+            print("ERROR: Aggregate is empty after filtering.")
+            sys.exit(1)
+        tmp_csv = os.path.join(args.output_dir, "_filtered_input.csv")
+        df.to_csv(tmp_csv, index=False)
+        run_solar_correlation(tmp_csv, args.output_dir)
+        os.remove(tmp_csv)
+    else:
+        detection_csv = config.resolve_detection_csv(args)
+        if not detection_csv:
+            print("ERROR: No filtered_detections.csv found. Run 01 first.")
+            sys.exit(1)
+        run_solar_correlation(detection_csv, args.output_dir)
+
+    config.save_processed_list(args.output_dir, ["aggregate"])
+
+
+if __name__ == "__main__":
+    if "--output-dir" in sys.argv:
+        _run_watcher_mode()
+    else:
+        # Standalone mode
+        run_solar_correlation("filtered_detections.csv", "results_solar")

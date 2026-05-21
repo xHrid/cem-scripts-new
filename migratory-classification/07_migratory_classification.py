@@ -208,4 +208,81 @@ def run_migratory_classification(detection_csv, output_dir):
     ax.axvline(PMR_THRESHOLD, color='black', linestyle='--', label=f'Threshold={PMR_THRESHOLD}')
     ax.set_xlabel('Peak-to-Median Ratio (PMR)')
     ax.set_title('PMR Distribution')
-    ax.le
+    ax.legend()
+
+    plt.tight_layout()
+    outpath = os.path.join(output_dir, "migratory_classification_distributions.png")
+    plt.savefig(outpath, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"Saved: {outpath}")
+
+    # --- Scatter: SCI vs PMR ---
+    fig, ax = plt.subplots(figsize=(10, 8))
+    for cls in ['Resident', 'Migratory']:
+        subset = metrics_df[metrics_df['Classification'] == cls]
+        ax.scatter(subset['SCI'], subset['PMR'].clip(upper=300),
+                   alpha=0.6, label=cls, color=colors[cls], s=40)
+    ax.axvline(SCI_THRESHOLD, color='gray', linestyle='--', alpha=0.5)
+    ax.axhline(PMR_THRESHOLD, color='gray', linestyle='--', alpha=0.5)
+    ax.set_xlabel('Seasonal Concentration Index (SCI)', fontsize=12)
+    ax.set_ylabel('Peak-to-Median Ratio (PMR)', fontsize=12)
+    ax.set_title('Migratory Classification: SCI vs PMR', fontsize=14)
+    ax.legend()
+    plt.tight_layout()
+
+    outpath = os.path.join(output_dir, "migratory_sci_vs_pmr.png")
+    plt.savefig(outpath, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"Saved: {outpath}")
+
+    print("\nDone. All results saved to:", output_dir)
+
+
+# =============================================================================
+# ENTRY POINT — auto-detect mode
+# =============================================================================
+
+def _resolve_dependency_aggregate(args, dep_filename):
+    """Find a dependency aggregate CSV. Priority: sibling of --aggregate-file > project DB."""
+    if args.aggregate_file:
+        agg_dir = os.path.dirname(args.aggregate_file)
+        candidate = os.path.join(agg_dir, dep_filename)
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
+def _run_watcher_mode():
+    """Aggregate-aware watcher mode for migratory classification."""
+    args = config.parse_common_args(description="07 – Migratory Classification (watcher)")
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    # Try aggregate first, fall back to legacy resolution
+    agg_path = _resolve_dependency_aggregate(args, "filtered_detections.csv")
+    if agg_path:
+        print(f"Loading from aggregate: {agg_path}")
+        df = config.load_aggregate(agg_path)
+        df = config.filter_aggregate_for_output(df, args.start_date, args.end_date, args.spots)
+        if df.empty:
+            print("ERROR: Aggregate is empty after filtering.")
+            sys.exit(1)
+        tmp_csv = os.path.join(args.output_dir, "_filtered_input.csv")
+        df.to_csv(tmp_csv, index=False)
+        run_migratory_classification(tmp_csv, args.output_dir)
+        os.remove(tmp_csv)
+    else:
+        detection_csv = config.resolve_detection_csv(args)
+        if not detection_csv:
+            print("ERROR: No filtered_detections.csv found. Run 01 first.")
+            sys.exit(1)
+        run_migratory_classification(detection_csv, args.output_dir)
+
+    config.save_processed_list(args.output_dir, ["aggregate"])
+
+
+if __name__ == "__main__":
+    if "--output-dir" in sys.argv:
+        _run_watcher_mode()
+    else:
+        # Standalone mode
+        run_migratory_classification(INPUT_CSV, "results_migratory")

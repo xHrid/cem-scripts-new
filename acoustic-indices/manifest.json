@@ -23,6 +23,7 @@
     "outputs": {
       "master_csv": "acoustic_indices.csv"
     },
+    "aggregate_file": "acoustic_indices.csv",
     "assets": [
       "00_config.py",
       "static_noise.wav",

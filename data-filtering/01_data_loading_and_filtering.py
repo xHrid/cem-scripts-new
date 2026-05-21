@@ -101,36 +101,81 @@ def print_summary(df):
 # =============================================================================
 
 def _run_watcher_mode():
-    """Watcher passes --output-dir. Reads birdnet_results.csv from project DB."""
+    """Aggregate-aware watcher mode.
+
+    Flow:
+      1. Load birdnet_results aggregate (the dependency)
+      2. Re-apply 4-step filtering to the FULL birdnet aggregate
+         (filtering depends on global stats — can't be incremental)
+      3. Save result as filtered_detections aggregate
+      4. Output date-range-filtered subset to job output dir
+    """
     import json
     args = config.parse_common_args(description="01 – Data Filtering (watcher)")
     os.makedirs(args.output_dir, exist_ok=True)
 
-    # Find input: birdnet_results.csv in project database
-    detection_csv = config.resolve_detection_csv(args)
-    if not detection_csv:
-        print("ERROR: No birdnet_results.csv found. Run 00b first.")
+    # --- Load birdnet aggregate (dependency) ---
+    # Try --aggregate-file first (watcher may pass the birdnet aggregate path),
+    # then fall back to project DB resolution
+    birdnet_aggregate_path = None
+    if args.aggregate_file:
+        # Watcher passes filtered_detections aggregate path, but we need birdnet's.
+        # Look for birdnet_results.csv in same directory.
+        agg_dir = os.path.dirname(args.aggregate_file)
+        candidate = os.path.join(agg_dir, "birdnet_results.csv")
+        if os.path.exists(candidate):
+            birdnet_aggregate_path = candidate
+
+    if not birdnet_aggregate_path:
+        birdnet_aggregate_path = config.resolve_detection_csv(args)
+
+    if not birdnet_aggregate_path or not os.path.exists(birdnet_aggregate_path):
+        print("ERROR: No birdnet_results.csv aggregate found. Run 00b first.")
         sys.exit(1)
 
-    print(f"Loading detections from: {detection_csv}")
-    results_df = pd.read_csv(detection_csv)
-    print(f"Total raw detections loaded: {len(results_df)}")
+    print(f"Loading birdnet aggregate: {birdnet_aggregate_path}")
+    raw_df = config.load_aggregate(birdnet_aggregate_path)
 
-    # Resolve eBird species file
+    # Strip _processed_only marker rows
+    if "_processed_only" in raw_df.columns:
+        raw_df = raw_df[raw_df["_processed_only"] != True].drop(columns=["_processed_only"])
+
+    print(f"Total raw detections: {len(raw_df)}")
+
+    if raw_df.empty:
+        print("ERROR: Birdnet aggregate has no detection data.")
+        sys.exit(1)
+
+    # --- Apply filtering ---
     ebird = EBIRD_SPECIES_FILE
     script_dir = os.path.dirname(os.path.abspath(__file__))
     if not os.path.exists(ebird):
         ebird = os.path.join(script_dir, "Sanjay_Van_Birds.txt")
 
-    filtered = filter_detections(results_df, ebird_file=ebird)
+    filtered = filter_detections(raw_df, ebird_file=ebird)
     print_summary(filtered)
 
-    out_csv = os.path.join(args.output_dir, "filtered_detections.csv")
-    filtered.to_csv(out_csv, index=False)
-    print(f"\nSaved to: {out_csv}")
+    # --- Save as filtered_detections aggregate ---
+    aggregate_path = config.resolve_aggregate_path(args, "filtered_detections.csv")
+    print(f"Writing filtered aggregate: {aggregate_path}")
+    config._atomic_csv_write(filtered, aggregate_path)
 
-    # processed.json: just record the input file
-    config.save_processed_list(args.output_dir, [os.path.basename(detection_csv)])
+    # --- Output date-filtered subset ---
+    output_df = config.filter_aggregate_for_output(
+        filtered,
+        start_date=args.start_date,
+        end_date=args.end_date,
+        spots=args.spots,
+    )
+
+    if not output_df.empty:
+        out_csv = os.path.join(args.output_dir, "filtered_detections.csv")
+        output_df.to_csv(out_csv, index=False)
+        print(f"Output {len(output_df)} filtered detections for requested range")
+    else:
+        print("WARNING: No detections after filtering for requested range / spots.")
+
+    config.save_processed_list(args.output_dir, [os.path.basename(birdnet_aggregate_path)])
 
 
 # =============================================================================

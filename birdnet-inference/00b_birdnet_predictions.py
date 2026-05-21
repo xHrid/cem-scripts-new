@@ -231,14 +231,31 @@ def extract_path_info(dataset_path):
 #  from BirdNet_Predictions.ipynb Cell 7)
 # =============================================================================
 def _run_watcher_mode():
-    """Entry point when launched by the watcher with CLI args."""
+    """Entry point when launched by the watcher with CLI args.
+
+    Aggregate-aware flow:
+      1. Load existing aggregate CSV → extract already-processed filenames
+      2. Diff against WAV files in datasets → only process NEW files
+      3. Append new detections to aggregate CSV
+      4. Mark files with no detections in aggregate (so they're never re-scanned)
+      5. Output date-range-filtered subset to job output dir
+    """
     import multiprocessing
 
     args = config.parse_common_args("BirdNET species classification from raw audio")
     output_dir = args.output_dir
     os.makedirs(output_dir, exist_ok=True)
 
-    # Resolve noise files
+    # --- Resolve aggregate file path ---
+    aggregate_path = config.resolve_aggregate_path(args, "birdnet_results.csv")
+    print(f"Aggregate file: {aggregate_path}")
+
+    # Load existing aggregate to know what's already processed
+    existing_aggregate = config.load_aggregate(aggregate_path)
+    already_processed = config.get_processed_filenames(existing_aggregate)
+    print(f"Aggregate contains {len(already_processed)} already-processed files")
+
+    # --- Resolve noise files ---
     noise_path = config.resolve_noise_path(args)
     if not noise_path:
         print("ERROR: No static_noise.wav found. Cannot denoise.")
@@ -246,7 +263,6 @@ def _run_watcher_mode():
 
     rain_noise_path = RAIN_NOISE_PATH
     if args.noise_path:
-        # Derive rain noise path from same directory as static noise
         rain_candidate = os.path.join(os.path.dirname(args.noise_path), "rain_noise.wav")
         if os.path.exists(rain_candidate):
             rain_noise_path = rain_candidate
@@ -255,15 +271,7 @@ def _run_watcher_mode():
     noise_clip, _ = librosa.load(noise_path, sr=TARGET_SR)
     rain_noise_clip, _ = librosa.load(rain_noise_path, sr=TARGET_SR)
 
-    # Skip-list: files already processed in previous jobs
-    skip_set = config.load_skip_list(args.skip_list)
-    print(f"Skip-list: {len(skip_set)} already-processed files")
-
-    # Date filter
-    start_val = int(args.start_date) if args.start_date else None
-    end_val = int(args.end_date) if args.end_date else None
-
-    # Parallelism
+    # --- Parallelism ---
     total_cpus = multiprocessing.cpu_count()
     N_WORKERS = max(1, min(total_cpus // 2, 4))
     THREADS_PER_WORKER = max(1, total_cpus // N_WORKERS)
@@ -271,7 +279,8 @@ def _run_watcher_mode():
           f"(detected {total_cpus} logical CPUs)")
 
     all_detections = []
-    processed_files = []
+    files_with_detections = set()
+    all_attempted_files = []
 
     for dataset_dir in args.datasets:
         if not os.path.isdir(dataset_dir):
@@ -282,12 +291,10 @@ def _run_watcher_mode():
         print(f"\n{'='*60}")
         print(f"Processing: {dataset_dir} ({len(wav_files)} WAV files)")
 
-        # Build task list, filtering by skip-list and date range
+        # Build task list — skip files already in aggregate
         tasks = []
         for filename in wav_files:
-            if filename in skip_set:
-                continue
-            if not config.filter_by_date(filename, start_val, end_val):
+            if filename in already_processed:
                 continue
             filepath = os.path.join(dataset_dir, filename)
             hour = config.extract_hour_from_filename(filename)
@@ -295,10 +302,10 @@ def _run_watcher_mode():
                           noise_clip, rain_noise_clip, hour))
 
         if not tasks:
-            print("  All files skipped (cached or out of date range)")
+            print("  All files already in aggregate (skipped)")
             continue
 
-        print(f"  Processing {len(tasks)} files (skipped {len(wav_files) - len(tasks)})")
+        print(f"  Processing {len(tasks)} NEW files (skipped {len(wav_files) - len(tasks)} cached)")
 
         with ProcessPoolExecutor(
             max_workers=N_WORKERS,
@@ -308,31 +315,48 @@ def _run_watcher_mode():
             futures = {executor.submit(_process_single_file, t): t[1] for t in tasks}
             with tqdm(total=len(tasks), desc=f"  BirdNET") as pbar:
                 for future in as_completed(futures):
+                    fname = futures[future]
                     result = future.result()
                     if result is not None:
                         all_detections.append(result)
+                        files_with_detections.add(fname)
                     pbar.update(1)
 
-        # Track ALL wav files in this dir as processed (including ones that
-        # produced no detections — so we don't re-scan them next time)
-        processed_files.extend([t[1] for t in tasks])
+        all_attempted_files.extend([t[1] for t in tasks])
 
-    # Combine and save
+    # --- Update aggregate ---
     if all_detections:
-        results_df = pd.concat(all_detections, ignore_index=True)
+        new_results_df = pd.concat(all_detections, ignore_index=True)
+        if 'common_name' in new_results_df.columns and 'label' not in new_results_df.columns:
+            new_results_df['label'] = new_results_df['common_name']
+        config.append_to_aggregate(new_results_df, aggregate_path)
+        print(f"\nAppended {len(new_results_df)} new detections to aggregate")
 
-        if 'common_name' in results_df.columns and 'label' not in results_df.columns:
-            results_df['label'] = results_df['common_name']
+    # Mark files with NO detections so they're never re-scanned
+    empty_files = [f for f in all_attempted_files if f not in files_with_detections]
+    if empty_files:
+        config.mark_empty_files(empty_files, aggregate_path)
+        print(f"Marked {len(empty_files)} files as empty (no detections)")
 
+    # --- Output filtered subset for this job ---
+    full_aggregate = config.load_aggregate(aggregate_path)
+    filtered = config.filter_aggregate_for_output(
+        full_aggregate,
+        start_date=args.start_date,
+        end_date=args.end_date,
+        spots=args.spots,
+    )
+
+    if not filtered.empty:
         output_csv = os.path.join(output_dir, "birdnet_results.csv")
-        results_df.to_csv(output_csv, index=False)
-        print(f"\nSaved {len(results_df)} detections to: {output_csv}")
+        filtered.to_csv(output_csv, index=False)
+        print(f"Output {len(filtered)} detections for requested range to: {output_csv}")
     else:
-        print("\nWARNING: No detections found across all datasets.")
+        print("WARNING: No detections in requested date range / spots.")
 
-    # Write processed.json for watcher cache update
-    config.save_processed_list(output_dir, processed_files)
-    print(f"Processed {len(processed_files)} files total.")
+    # Legacy: still write processed.json for backward compat with old watchers
+    config.save_processed_list(output_dir, all_attempted_files)
+    print(f"Processed {len(all_attempted_files)} new files this run.")
 
 
 def _run_standalone_mode():

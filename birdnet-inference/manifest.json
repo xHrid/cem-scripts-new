@@ -23,6 +23,7 @@
     "outputs": {
       "master_csv": "birdnet_results.csv"
     },
+    "aggregate_file": "birdnet_results.csv",
     "assets": [
       "00_config.py",
       "Sanjay_Van_Birds.txt",

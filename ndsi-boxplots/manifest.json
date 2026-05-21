@@ -4,9 +4,15 @@
     "name": "NDSI Box Plots",
     "script_file": "06_ndsi_boxplots.py",
     "description": "Generate box plots of NDSI and other acoustic indices across monitoring sites.",
-    "inputs": [],
+    "inputs": [
+      {
+        "type": "spot_date_range",
+        "label": "Select spots and date range",
+        "valid_extensions": [".wav"]
+      }
+    ],
     "parameters": [],
-    "depends_on": ["05_acoustic_indices.py"],
+    "depends_on": ["05_indices"],
     "outputs": {},
     "assets": [
       "00_config.py"

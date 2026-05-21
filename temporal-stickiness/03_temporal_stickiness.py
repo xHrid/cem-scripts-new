@@ -63,8 +63,7 @@ def run_analysis(input_csv, output_dir):
     # =============================================================================
     print("\nCalculating Activity Regularity...")
 
-    # Pre-compute hourly count pivot: (species, spot, date) → 24-hour vector
-    # This replaces repeated boolean masking inside a triple-nested loop.
+    # Pre-compute hourly count pivot: (species, spot, date) -> 24-hour vector
     hourly_counts = (
         activity_df
         .groupby(['label', 'Spot', 'Date', 'hour'])
@@ -148,7 +147,7 @@ def run_analysis(input_csv, output_dir):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(22, 14))
     fig.suptitle(
         f'Activity Regularity: Top {TOP_N} Species\n'
-        f'(Average Spearman ρ of consecutive-day hourly patterns)',
+        f'(Average Spearman rho of consecutive-day hourly patterns)',
         fontsize=16, fontweight='bold'
     )
 
@@ -158,7 +157,7 @@ def run_analysis(input_csv, output_dir):
         data=top_temporal, palette='plasma', ax=ax1
     )
     ax1.set_title('Activity Regularity (Predictability)', fontsize=14)
-    ax1.set_xlabel("Average Spearman Correlation (ρ)", fontsize=12)
+    ax1.set_xlabel("Average Spearman Correlation (rho)", fontsize=12)
     ax1.set_ylabel("Species", fontsize=12)
     ax1.set_xlim(-0.2, 1.0)
     ax1.grid(axis='x', linestyle='--', alpha=0.6)
@@ -169,4 +168,64 @@ def run_analysis(input_csv, output_dir):
         data=top_calls, palette="magma", ax=ax2
     )
     ax2.set_title('Average Daily Call Volume', fontsize=14)
-    ax2.set_x
+    ax2.set_xlabel("Average Calls per Day", fontsize=12)
+    ax2.set_ylabel("")
+    ax2.grid(axis='x', linestyle='--', alpha=0.6)
+
+    plt.tight_layout()
+    outpath = os.path.join(output_dir, "temporal_stickiness_top_species.png")
+    plt.savefig(outpath, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"Saved: {outpath}")
+
+    print("\nDone. All results saved to:", output_dir)
+
+
+# =============================================================================
+# ENTRY POINT — auto-detect mode
+# =============================================================================
+
+def _resolve_dependency_aggregate(args, dep_filename):
+    """Find a dependency aggregate CSV. Priority: sibling of --aggregate-file > project DB."""
+    if args.aggregate_file:
+        agg_dir = os.path.dirname(args.aggregate_file)
+        candidate = os.path.join(agg_dir, dep_filename)
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
+def _run_watcher_mode():
+    """Aggregate-aware watcher mode for temporal stickiness."""
+    args = config.parse_common_args(description="03 – Temporal Stickiness (watcher)")
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    # Try aggregate first, fall back to legacy resolution
+    agg_path = _resolve_dependency_aggregate(args, "filtered_detections.csv")
+    if agg_path:
+        print(f"Loading from aggregate: {agg_path}")
+        df = config.load_aggregate(agg_path)
+        df = config.filter_aggregate_for_output(df, args.start_date, args.end_date, args.spots)
+        if df.empty:
+            print("ERROR: Aggregate is empty after filtering.")
+            sys.exit(1)
+        tmp_csv = os.path.join(args.output_dir, "_filtered_input.csv")
+        df.to_csv(tmp_csv, index=False)
+        run_analysis(tmp_csv, args.output_dir)
+        os.remove(tmp_csv)
+    else:
+        detection_csv = config.resolve_detection_csv(args)
+        if not detection_csv:
+            print("ERROR: No filtered_detections.csv found. Run 01 first.")
+            sys.exit(1)
+        run_analysis(detection_csv, args.output_dir)
+
+    config.save_processed_list(args.output_dir, ["aggregate"])
+
+
+if __name__ == "__main__":
+    if "--output-dir" in sys.argv:
+        _run_watcher_mode()
+    else:
+        # Standalone mode
+        run_analysis("filtered_detections.csv", "results_temporal_stickiness")

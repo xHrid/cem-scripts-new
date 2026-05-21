@@ -304,34 +304,71 @@ def process_wav_files(datasets, noise_path, output_dir, skip_set=None,
 # =============================================================================
 
 def _run_watcher_mode():
-    """Called when watcher passes --output-dir (CLI mode)."""
+    """Aggregate-aware watcher mode.
+
+    Flow:
+      1. Load aggregate → get processed filenames
+      2. Process only NEW files from datasets
+      3. Append results to aggregate + mark empty files
+      4. Output date-filtered subset to job output dir
+    """
     args = config.parse_common_args(description="05 – Acoustic Indices (watcher)")
     os.makedirs(args.output_dir, exist_ok=True)
+
+    # --- Aggregate ---
+    aggregate_path = config.resolve_aggregate_path(args, "acoustic_indices.csv")
+    print(f"Aggregate file: {aggregate_path}")
+
+    existing_aggregate = config.load_aggregate(aggregate_path)
+    already_processed = config.get_processed_filenames(existing_aggregate)
+    print(f"Aggregate contains {len(already_processed)} already-processed files")
 
     noise_path = config.resolve_noise_path(args)
     if not noise_path:
         print("ERROR: No noise reference WAV found. Exiting.")
         sys.exit(1)
 
-    skip_set = config.load_skip_list(args.skip_list)
-
+    # Process only NEW files (skip_set = already in aggregate)
     results, processed = process_wav_files(
         datasets=args.datasets,
         noise_path=noise_path,
         output_dir=args.output_dir,
-        skip_set=skip_set,
-        start_date=args.start_date,
-        end_date=args.end_date,
+        skip_set=already_processed,
         snr_db=args.snr_db,
     )
 
+    # --- Update aggregate ---
+    files_with_results = set()
     if results:
+        new_df = pd.DataFrame(results)
+        config.append_to_aggregate(new_df, aggregate_path)
+        files_with_results = set(new_df["filename"].unique())
+        print(f"Appended {len(new_df)} new rows to aggregate")
+
+    # Mark files with no indices (e.g. too short to segment)
+    empty_files = [f for f in processed if f not in files_with_results]
+    if empty_files:
+        config.mark_empty_files(empty_files, aggregate_path)
+        print(f"Marked {len(empty_files)} files as empty")
+
+    # --- Output filtered subset ---
+    full_aggregate = config.load_aggregate(aggregate_path)
+    filtered = config.filter_aggregate_for_output(
+        full_aggregate,
+        start_date=args.start_date,
+        end_date=args.end_date,
+        spots=args.spots,
+    )
+
+    if not filtered.empty:
         out_csv = os.path.join(args.output_dir, "acoustic_indices.csv")
-        pd.DataFrame(results).to_csv(out_csv, index=False)
-        print(f"Saved {len(results)} rows → {out_csv}")
+        filtered.to_csv(out_csv, index=False)
+        print(f"Output {len(filtered)} rows for requested range → {out_csv}")
+    else:
+        print("WARNING: No indices in requested date range / spots.")
 
     config.save_processed_list(args.output_dir, processed)
-    print(f"Done. {len(processed)} files processed.")
+    print(f"Done. {len(processed)} new files processed.")
 
 
 # =============================================================================

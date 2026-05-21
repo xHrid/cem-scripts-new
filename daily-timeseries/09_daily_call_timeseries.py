@@ -130,4 +130,73 @@ def run_daily_timeseries(input_csv, output_dir, species_to_plot=None, max_specie
     avail_pivot = availability.pivot_table(
         index='Spot', columns='Date_Only', values='count', fill_value=0
     )
-   
+
+    # Binary: 1 if any recordings, 0 otherwise
+    avail_binary = (avail_pivot > 0).astype(int)
+
+    plt.figure(figsize=(20, 4))
+    sns.heatmap(avail_binary, cmap='Greens', cbar=False, linewidths=0.1)
+    plt.title('Data Availability Across Sites', fontsize=14)
+    plt.xlabel('Date')
+    plt.ylabel('Monitoring Site')
+    plt.tight_layout()
+
+    outpath = os.path.join(output_dir, "data_availability_heatmap.png")
+    plt.savefig(outpath, dpi=150)
+    plt.close()
+    print(f"  Saved: {outpath}")
+
+    print(f"\nDone. {len(unique_birds)} time series plots saved to: {output_dir}")
+
+
+# =============================================================================
+# ENTRY POINT — auto-detect mode
+# =============================================================================
+
+def _resolve_dependency_aggregate(args, dep_filename):
+    """Find a dependency aggregate CSV. Priority: sibling of --aggregate-file > project DB."""
+    if args.aggregate_file:
+        agg_dir = os.path.dirname(args.aggregate_file)
+        candidate = os.path.join(agg_dir, dep_filename)
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
+def _run_watcher_mode():
+    """Aggregate-aware watcher mode for daily call timeseries."""
+    args = config.parse_common_args(description="09 – Daily Call Timeseries (watcher)")
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    # Try aggregate first, fall back to legacy resolution
+    agg_path = _resolve_dependency_aggregate(args, "filtered_detections.csv")
+    if agg_path:
+        print(f"Loading from aggregate: {agg_path}")
+        df = config.load_aggregate(agg_path)
+        df = config.filter_aggregate_for_output(df, args.start_date, args.end_date, args.spots)
+        if df.empty:
+            print("ERROR: Aggregate is empty after filtering.")
+            sys.exit(1)
+        tmp_csv = os.path.join(args.output_dir, "_filtered_input.csv")
+        df.to_csv(tmp_csv, index=False)
+        run_daily_timeseries(tmp_csv, args.output_dir,
+                             species_to_plot=SPECIES_TO_PLOT, max_species=MAX_SPECIES)
+        os.remove(tmp_csv)
+    else:
+        detection_csv = config.resolve_detection_csv(args)
+        if not detection_csv:
+            print("ERROR: No filtered_detections.csv found. Run 01 first.")
+            sys.exit(1)
+        run_daily_timeseries(detection_csv, args.output_dir,
+                             species_to_plot=SPECIES_TO_PLOT, max_species=MAX_SPECIES)
+
+    config.save_processed_list(args.output_dir, ["aggregate"])
+
+
+if __name__ == "__main__":
+    if "--output-dir" in sys.argv:
+        _run_watcher_mode()
+    else:
+        # Standalone mode
+        run_daily_timeseries("filtered_detections.csv", "results_timeseries",
+                             species_to_plot=SPECIES_TO_PLOT, max_species=MAX_SPECIES)

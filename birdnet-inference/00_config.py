@@ -17,6 +17,8 @@ import argparse
 import os
 import re
 import json
+import shutil
+import pandas as pd
 import librosa
 
 # =============================================================================
@@ -160,8 +162,11 @@ def parse_common_args(description="Analysis script"):
                         help="Project folder path")
     parser.add_argument("--noise-path", type=str, default="",
                         help="Path to static_noise.wav")
+    parser.add_argument("--aggregate-file", type=str, default="",
+                        help="Path to persistent aggregate CSV (scripts own read/write)")
+    # Legacy support — ignored if --aggregate-file is set
     parser.add_argument("--skip-list", type=str, default="",
-                        help="Path to JSON list of already-processed filenames")
+                        help="(DEPRECATED) Path to skip-list JSON")
 
     # Filtering
     parser.add_argument("--spots", type=str, default="",
@@ -259,6 +264,159 @@ def filter_by_date(filename, start_val, end_val):
     if end_val and file_date > end_val:
         return False
     return True
+
+
+# =============================================================================
+# AGGREGATE FILE MANAGEMENT
+# =============================================================================
+# Aggregate CSVs are the persistent result store. They grow over time as new
+# audio is processed. A special column `_processed_only` (bool) marks files
+# that were processed but produced no detections — so we never re-scan them.
+#
+# Flow:
+#   1. load_aggregate(path) → DataFrame (may be empty)
+#   2. get_processed_filenames(df) → set of all filenames already handled
+#   3. Script processes only NEW files
+#   4. append_to_aggregate(new_df, path) — merges new results + saves
+#   5. mark_empty_files(filenames, path) — stamps no-detection files
+#   6. filter_aggregate_for_output(df, start, end, spots) → clean subset
+# =============================================================================
+
+# Sentinel column name for "processed but empty" marker rows
+_PROCESSED_ONLY_COL = "_processed_only"
+
+
+def load_aggregate(aggregate_path):
+    """Load an existing aggregate CSV. Returns empty DataFrame if not found."""
+    if not aggregate_path or not os.path.exists(aggregate_path):
+        return pd.DataFrame()
+    try:
+        df = pd.read_csv(aggregate_path)
+        return df
+    except (pd.errors.EmptyDataError, pd.errors.ParserError):
+        return pd.DataFrame()
+
+
+def get_processed_filenames(aggregate_df):
+    """Extract the set of all filenames present in the aggregate (data + empty markers)."""
+    if aggregate_df.empty or "filename" not in aggregate_df.columns:
+        return set()
+    return set(aggregate_df["filename"].dropna().unique())
+
+
+def append_to_aggregate(new_df, aggregate_path):
+    """Append new result rows to the aggregate CSV. Creates file if absent.
+
+    Handles column alignment: if aggregate has extra columns (e.g. _processed_only),
+    new_df rows get NaN for those. Vice versa columns are added.
+    """
+    if new_df.empty:
+        return
+
+    os.makedirs(os.path.dirname(aggregate_path), exist_ok=True)
+
+    existing = load_aggregate(aggregate_path)
+    if existing.empty:
+        combined = new_df.copy()
+    else:
+        combined = pd.concat([existing, new_df], ignore_index=True)
+
+    _atomic_csv_write(combined, aggregate_path)
+
+
+def mark_empty_files(filenames, aggregate_path):
+    """Add marker rows for files that produced zero detections.
+
+    These rows have _processed_only=True and only the filename column filled.
+    Prevents re-processing files that legitimately have no bird calls.
+    """
+    if not filenames:
+        return
+
+    existing = load_aggregate(aggregate_path)
+    already_marked = get_processed_filenames(existing)
+    new_empties = [f for f in filenames if f not in already_marked]
+
+    if not new_empties:
+        return
+
+    marker_rows = pd.DataFrame({
+        "filename": new_empties,
+        _PROCESSED_ONLY_COL: True,
+    })
+
+    os.makedirs(os.path.dirname(aggregate_path), exist_ok=True)
+
+    if existing.empty:
+        combined = marker_rows
+    else:
+        combined = pd.concat([existing, marker_rows], ignore_index=True)
+
+    _atomic_csv_write(combined, aggregate_path)
+
+
+def filter_aggregate_for_output(aggregate_df, start_date="", end_date="", spots=""):
+    """Filter aggregate to user-requested date range and spots. Strips marker rows.
+
+    Args:
+        aggregate_df: Full aggregate DataFrame.
+        start_date: YYYYMMDD string (inclusive). Empty = no lower bound.
+        end_date: YYYYMMDD string (inclusive). Empty = no upper bound.
+        spots: Comma-separated spot names. Empty = all spots.
+
+    Returns:
+        Cleaned DataFrame with only real data rows matching the filters.
+    """
+    if aggregate_df.empty:
+        return aggregate_df
+
+    # Strip processed-only marker rows
+    df = aggregate_df.copy()
+    if _PROCESSED_ONLY_COL in df.columns:
+        df = df[df[_PROCESSED_ONLY_COL] != True].drop(columns=[_PROCESSED_ONLY_COL])
+
+    if df.empty:
+        return df
+
+    # Date filtering from filename
+    if start_date or end_date:
+        start_val = int(start_date) if start_date else None
+        end_val = int(end_date) if end_date else None
+        mask = df["filename"].apply(lambda f: filter_by_date(f, start_val, end_val))
+        df = df[mask]
+
+    # Spot filtering
+    if spots:
+        spot_list = [s.strip().upper() for s in spots.split(",")]
+        if "spot" in df.columns:
+            df = df[df["spot"].str.upper().isin(spot_list)]
+        elif "Spot" in df.columns:
+            df = df[df["Spot"].str.upper().isin(spot_list)]
+
+    return df.reset_index(drop=True)
+
+
+def _atomic_csv_write(df, path):
+    """Write CSV atomically via temp file + rename. Prevents corruption on crash."""
+    tmp_path = path + ".tmp"
+    df.to_csv(tmp_path, index=False)
+    shutil.move(tmp_path, path)
+
+
+def resolve_aggregate_path(args, fallback_name="aggregate.csv"):
+    """Resolve the aggregate file path from CLI args or project database dir.
+
+    Priority: --aggregate-file > project_dir/system/database/<fallback_name>
+    """
+    if args.aggregate_file and args.aggregate_file.strip():
+        return args.aggregate_file
+
+    if args.project_dir:
+        db_dir = os.path.join(args.project_dir, "system", "database")
+        os.makedirs(db_dir, exist_ok=True)
+        return os.path.join(db_dir, fallback_name)
+
+    return os.path.join(args.output_dir, fallback_name)
 
 
 # =============================================================================

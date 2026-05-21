@@ -101,4 +101,59 @@ def run_boxplots(indices_csv_or_dir, output_dir):
         plt.grid(axis='y', linestyle='--', alpha=0.7)
         plt.tight_layout()
 
-        outpath = os.path.join(output_d
+        outpath = os.path.join(output_dir, f"boxplot_{index_name}.png")
+        plt.savefig(outpath, dpi=300)
+        plt.close()
+        print(f"  Saved: {outpath}")
+
+    print("\nDone. All box plots saved to:", output_dir)
+
+
+# =============================================================================
+# ENTRY POINT — auto-detect mode
+# =============================================================================
+
+def _resolve_dependency_aggregate(args, dep_filename):
+    """Find a dependency aggregate CSV. Priority: sibling of --aggregate-file > project DB."""
+    if args.aggregate_file:
+        agg_dir = os.path.dirname(args.aggregate_file)
+        candidate = os.path.join(agg_dir, dep_filename)
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
+def _run_watcher_mode():
+    """Aggregate-aware watcher mode for NDSI boxplots."""
+    args = config.parse_common_args(description="06 – NDSI Boxplots (watcher)")
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    # Try aggregate first (acoustic_indices), fall back to legacy resolution
+    agg_path = _resolve_dependency_aggregate(args, "acoustic_indices.csv")
+    if agg_path:
+        print(f"Loading from aggregate: {agg_path}")
+        df = config.load_aggregate(agg_path)
+        df = config.filter_aggregate_for_output(df, args.start_date, args.end_date, args.spots)
+        if df.empty:
+            print("ERROR: Aggregate is empty after filtering.")
+            sys.exit(1)
+        tmp_csv = os.path.join(args.output_dir, "_filtered_input.csv")
+        df.to_csv(tmp_csv, index=False)
+        run_boxplots(tmp_csv, args.output_dir)
+        os.remove(tmp_csv)
+    else:
+        indices_csv = config.resolve_indices_csv(args)
+        if not indices_csv:
+            print("ERROR: No acoustic indices CSV found. Run 05 first.")
+            sys.exit(1)
+        run_boxplots(indices_csv, args.output_dir)
+
+    config.save_processed_list(args.output_dir, ["aggregate"])
+
+
+if __name__ == "__main__":
+    if "--output-dir" in sys.argv:
+        _run_watcher_mode()
+    else:
+        # Standalone mode
+        run_boxplots(INDICES_DIR, "results_ndsi_boxplots")

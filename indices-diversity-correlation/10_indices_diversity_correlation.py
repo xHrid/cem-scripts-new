@@ -202,8 +202,8 @@ def run_analysis(detections_csv, indices_csv, output_dir):
         grid_search_rf = GridSearchCV(estimator=rf, param_grid=param_grid_rf, cv=5, scoring='r2', n_jobs=-1)
         grid_search_rf.fit(X_train, y_train)
         best_rf = grid_search_rf.best_estimator_
-        print(f"  RF Train R² = {r2_score(y_train, best_rf.predict(X_train)):.4f}")
-        print(f"  RF Test R²  = {r2_score(y_test, best_rf.predict(X_test)):.4f}")
+        print(f"  RF Train R2 = {r2_score(y_train, best_rf.predict(X_train)):.4f}")
+        print(f"  RF Test R2  = {r2_score(y_test, best_rf.predict(X_test)):.4f}")
 
         print("  Running Gradient Boosting GridSearchCV...")
         param_grid_gb = {
@@ -215,8 +215,8 @@ def run_analysis(detections_csv, indices_csv, output_dir):
         grid_search_gb = GridSearchCV(estimator=gb, param_grid=param_grid_gb, cv=5, scoring='r2', n_jobs=-1)
         grid_search_gb.fit(X_train, y_train)
         best_gb = grid_search_gb.best_estimator_
-        print(f"  GB Train R² = {r2_score(y_train, best_gb.predict(X_train)):.4f}")
-        print(f"  GB Test R²  = {r2_score(y_test, best_gb.predict(X_test)):.4f}")
+        print(f"  GB Train R2 = {r2_score(y_train, best_gb.predict(X_train)):.4f}")
+        print(f"  GB Test R2  = {r2_score(y_test, best_gb.predict(X_test)):.4f}")
     else:
         print("  Insufficient data for regression analysis.")
 
@@ -227,8 +227,73 @@ def run_analysis(detections_csv, indices_csv, output_dir):
 # =============================================================================
 # ENTRY POINT — auto-detect mode
 # =============================================================================
+
+def _resolve_dependency_aggregate(args, dep_filename):
+    """Find a dependency aggregate CSV. Priority: sibling of --aggregate-file > project DB."""
+    if args.aggregate_file:
+        agg_dir = os.path.dirname(args.aggregate_file)
+        candidate = os.path.join(agg_dir, dep_filename)
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
+def _run_watcher_mode():
+    """Aggregate-aware watcher mode for indices-diversity correlation.
+
+    This script needs BOTH filtered_detections and acoustic_indices.
+    """
+    args = config.parse_common_args(description="10 – Indices vs Diversity (watcher)")
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    # --- Resolve detections input ---
+    det_agg_path = _resolve_dependency_aggregate(args, "filtered_detections.csv")
+    if det_agg_path:
+        print(f"Loading detections from aggregate: {det_agg_path}")
+        det_df = config.load_aggregate(det_agg_path)
+        det_df = config.filter_aggregate_for_output(det_df, args.start_date, args.end_date, args.spots)
+        if det_df.empty:
+            print("ERROR: Detections aggregate is empty after filtering.")
+            sys.exit(1)
+        det_csv = os.path.join(args.output_dir, "_filtered_detections.csv")
+        det_df.to_csv(det_csv, index=False)
+    else:
+        det_csv = config.resolve_detection_csv(args)
+        if not det_csv:
+            print("ERROR: No filtered_detections.csv found. Run 01 first.")
+            sys.exit(1)
+
+    # --- Resolve indices input ---
+    idx_agg_path = _resolve_dependency_aggregate(args, "acoustic_indices.csv")
+    if idx_agg_path:
+        print(f"Loading indices from aggregate: {idx_agg_path}")
+        idx_df = config.load_aggregate(idx_agg_path)
+        idx_df = config.filter_aggregate_for_output(idx_df, args.start_date, args.end_date, args.spots)
+        if idx_df.empty:
+            print("ERROR: Indices aggregate is empty after filtering.")
+            sys.exit(1)
+        idx_csv = os.path.join(args.output_dir, "_filtered_indices.csv")
+        idx_df.to_csv(idx_csv, index=False)
+    else:
+        idx_csv = config.resolve_indices_csv(args)
+        if not idx_csv:
+            print("ERROR: No acoustic indices CSV found. Run 05 first.")
+            sys.exit(1)
+
+    run_analysis(det_csv, idx_csv, args.output_dir)
+
+    # Clean up temp files
+    for tmp in ["_filtered_detections.csv", "_filtered_indices.csv"]:
+        tmp_path = os.path.join(args.output_dir, tmp)
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+    config.save_processed_list(args.output_dir, ["aggregate"])
+
+
 if __name__ == "__main__":
     if "--output-dir" in sys.argv:
-        # Watcher mode
-        args = config.parse_common_args(description="10 – Indices vs Diversity (watcher)")
-        os.makedirs(args.output_dir, exist_ok=Tr
+        _run_watcher_mode()
+    else:
+        # Standalone mode
+        run_analysis(DETECTIONS_CSV, INDICES_CSV, "results_indices_diversity")

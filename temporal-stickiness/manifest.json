@@ -4,9 +4,15 @@
     "name": "Temporal Stickiness (Activity Regularity)",
     "script_file": "03_temporal_stickiness.py",
     "description": "Compute Activity Regularity per species using Spearman rank correlation of consecutive-day hourly activity vectors.",
-    "inputs": [],
+    "inputs": [
+      {
+        "type": "spot_date_range",
+        "label": "Select spots and date range",
+        "valid_extensions": [".wav"]
+      }
+    ],
     "parameters": [],
-    "depends_on": ["01_data_loading_and_filtering.py"],
+    "depends_on": ["01_filter"],
     "outputs": {
       "master_csv": "all_species_activity_regularity.csv"
     },

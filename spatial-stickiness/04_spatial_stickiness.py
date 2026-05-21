@@ -17,7 +17,7 @@ Produces:
   - Aligned activity heatmap showing per-site detection levels
   - CSV export
 
-Paper Reference: Section 4.3.2 - "spatial stickiness (Average Spearman correlation, ρ)"
+Paper Reference: Section 4.3.2 - "spatial stickiness (Average Spearman correlation, rho)"
 """
 
 import pandas as pd
@@ -70,8 +70,7 @@ def run_analysis(input_csv, output_dir):
     # =============================================================================
     print("\nCalculating Habitat Affinity...")
 
-    # Pre-compute spatial count pivot: (species, date) → [count per spot]
-    # This avoids repeated boolean masking inside the double-nested loop.
+    # Pre-compute spatial count pivot: (species, date) -> [count per spot]
     spot_counts_pivot = (
         spatial_df[spatial_df['label'].isin(species_list)]
         .groupby(['label', 'Date', 'Spot'])
@@ -145,5 +144,82 @@ def run_analysis(input_csv, output_dir):
         data=spatial_df_out, palette='viridis'
     )
     plt.title(f'Habitat Affinity ({len(spatial_df_out)} Species at All Sites)', fontsize=16)
-    plt.xlabel('Average Spearman Correlation (ρ)', fontsize=12)
-  
+    plt.xlabel('Average Spearman Correlation (rho)', fontsize=12)
+    plt.ylabel('Species', fontsize=12)
+    plt.grid(axis='x', linestyle='--', alpha=0.6)
+    plt.tight_layout()
+
+    outpath = os.path.join(output_dir, "spatial_stickiness_bar_chart.png")
+    plt.savefig(outpath, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"Saved: {outpath}")
+
+    # --- Aligned Heatmap ---
+    if not heatmap_data.empty:
+        ordered_species = spatial_df_out['label'].tolist()
+        heatmap_ordered = heatmap_data.reindex(ordered_species).fillna(0)
+
+        plt.figure(figsize=(12, max(10, len(ordered_species) * 0.3)))
+        sns.heatmap(heatmap_ordered, cmap='YlOrRd', annot=True, fmt='.1f',
+                    cbar_kws={'label': 'Avg Daily Detections'})
+        plt.title('Per-Site Activity (aligned with Habitat Affinity ranking)', fontsize=14)
+        plt.xlabel('Monitoring Site')
+        plt.ylabel('Species')
+        plt.tight_layout()
+
+        outpath = os.path.join(output_dir, "spatial_stickiness_heatmap.png")
+        plt.savefig(outpath, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f"Saved: {outpath}")
+
+    print("\nDone. All results saved to:", output_dir)
+
+
+# =============================================================================
+# ENTRY POINT — auto-detect mode
+# =============================================================================
+
+def _resolve_dependency_aggregate(args, dep_filename):
+    """Find a dependency aggregate CSV. Priority: sibling of --aggregate-file > project DB."""
+    if args.aggregate_file:
+        agg_dir = os.path.dirname(args.aggregate_file)
+        candidate = os.path.join(agg_dir, dep_filename)
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
+def _run_watcher_mode():
+    """Aggregate-aware watcher mode for spatial stickiness."""
+    args = config.parse_common_args(description="04 – Spatial Stickiness (watcher)")
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    # Try aggregate first, fall back to legacy resolution
+    agg_path = _resolve_dependency_aggregate(args, "filtered_detections.csv")
+    if agg_path:
+        print(f"Loading from aggregate: {agg_path}")
+        df = config.load_aggregate(agg_path)
+        df = config.filter_aggregate_for_output(df, args.start_date, args.end_date, args.spots)
+        if df.empty:
+            print("ERROR: Aggregate is empty after filtering.")
+            sys.exit(1)
+        tmp_csv = os.path.join(args.output_dir, "_filtered_input.csv")
+        df.to_csv(tmp_csv, index=False)
+        run_analysis(tmp_csv, args.output_dir)
+        os.remove(tmp_csv)
+    else:
+        detection_csv = config.resolve_detection_csv(args)
+        if not detection_csv:
+            print("ERROR: No filtered_detections.csv found. Run 01 first.")
+            sys.exit(1)
+        run_analysis(detection_csv, args.output_dir)
+
+    config.save_processed_list(args.output_dir, ["aggregate"])
+
+
+if __name__ == "__main__":
+    if "--output-dir" in sys.argv:
+        _run_watcher_mode()
+    else:
+        # Standalone mode
+        run_analysis("filtered_detections.csv", "results_spatial_stickiness")
