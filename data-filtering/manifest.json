@@ -1,0 +1,18 @@
+[
+  {
+    "id": "01_filter",
+    "name": "Data Filtering Pipeline",
+    "script_file": "01_data_loading_and_filtering.py",
+    "description": "Apply 4-step filtering to BirdNET detections: eBird taxonomic verification, confidence thresholding (>0.3), minimum activity (>10 detections), temporal consistency (>=5 active days).",
+    "inputs": [],
+    "parameters": [],
+    "depends_on": ["00b_birdnet_predictions.py"],
+    "outputs": {
+      "master_csv": "filtered_detections.csv"
+    },
+    "assets": [
+      "00_config.py",
+      "Sanjay_Van_Birds.txt"
+    ]
+  }
+]

@@ -1,1 +1,13 @@
-["birdnet-inference", "acoustic-indices", "deep-analysis"]
+[
+  "birdnet-inference",
+  "acoustic-indices",
+  "data-filtering",
+  "activity-heatmaps",
+  "temporal-stickiness",
+  "spatial-stickiness",
+  "ndsi-boxplots",
+  "migratory-classification",
+  "solar-correlation",
+  "daily-timeseries",
+  "indices-diversity-correlation"
+]

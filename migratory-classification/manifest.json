@@ -1,0 +1,17 @@
+[
+  {
+    "id": "07_migratory",
+    "name": "Migratory Classification",
+    "script_file": "07_migratory_classification.py",
+    "description": "Classify species as migratory or resident using SCI, Residual Kurtosis, and PMR. Species classified migratory if all three thresholds exceeded.",
+    "inputs": [],
+    "parameters": [],
+    "depends_on": ["01_data_loading_and_filtering.py"],
+    "outputs": {
+      "master_csv": "migratory_classification_all_species.csv"
+    },
+    "assets": [
+      "00_config.py"
+    ]
+  }
+]

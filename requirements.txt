@@ -1,21 +1,13 @@
-# --- Audio Processing & Math ---
 numpy
-scipy
 pandas
 librosa
 soundfile
-
-# --- Machine Learning & Models ---
+scipy
 scikit-learn
 joblib
-birdnetlib
-tensorflow
-
-# --- Visualization & Utilities ---
+tqdm
 matplotlib
 seaborn
-tqdm
-
-# --- Geospatial & Time ---
+birdnetlib
 astral
 pytz

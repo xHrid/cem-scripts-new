@@ -1,0 +1,17 @@
+[
+  {
+    "id": "10_correlation",
+    "name": "Indices vs Diversity Correlation",
+    "script_file": "10_indices_diversity_correlation.py",
+    "description": "Correlate acoustic indices with ground-truth biodiversity metrics (Shannon, Simpson). Bootstrap Spearman correlation with 95% CI, plus RF and GB regression.",
+    "inputs": [],
+    "parameters": [],
+    "depends_on": ["01_data_loading_and_filtering.py"],
+    "outputs": {
+      "master_csv": "combined_indices_diversity.csv"
+    },
+    "assets": [
+      "00_config.py"
+    ]
+  }
+]

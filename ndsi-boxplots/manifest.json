@@ -1,0 +1,15 @@
+[
+  {
+    "id": "06_ndsi",
+    "name": "NDSI Box Plots",
+    "script_file": "06_ndsi_boxplots.py",
+    "description": "Generate box plots of NDSI and other acoustic indices across monitoring sites.",
+    "inputs": [],
+    "parameters": [],
+    "depends_on": ["05_acoustic_indices.py"],
+    "outputs": {},
+    "assets": [
+      "00_config.py"
+    ]
+  }
+]

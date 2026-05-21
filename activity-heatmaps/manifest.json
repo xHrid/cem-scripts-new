@@ -1,0 +1,15 @@
+[
+  {
+    "id": "02_heatmaps",
+    "name": "Activity Heatmaps",
+    "script_file": "02_activity_heatmaps.py",
+    "description": "Generate per-site heatmaps showing hourly bird activity patterns (normalized and non-normalized).",
+    "inputs": [],
+    "parameters": [],
+    "depends_on": ["01_data_loading_and_filtering.py"],
+    "outputs": {},
+    "assets": [
+      "00_config.py"
+    ]
+  }
+]

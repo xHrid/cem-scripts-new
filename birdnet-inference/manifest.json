@@ -1,26 +1,35 @@
 [
   {
-    "id": "birdnet_inference",
-    "name": "1. BirdNET Acoustic Inference",
-    "script_file": "birdnet_predictions.py",
-    "description": "Runs heavy ML inference to detect bird species from audio.",
+    "id": "00b_birdnet",
+    "name": "BirdNET Species Detection",
+    "script_file": "00b_birdnet_predictions.py",
+    "description": "Run BirdNET deep-learning classifier on raw audio to identify bird species. Outputs per-file detection CSV with species, confidence, and timestamps.",
     "inputs": [
       {
         "type": "spot_date_range",
-        "label": "Select Spot & Date Range",
+        "label": "Select spots and date range",
         "valid_extensions": [".wav"]
       }
     ],
-    "depends_on": [],
     "parameters": [
       {
-        "id": "sampling_rule",
-        "label": "Sampling Rule",
-        "type": "select",
-        "options": ["2R4W", "5R5W", "30R30W"],
-        "default": "2R4W"
+        "id": "snr_db",
+        "label": "SNR for noise removal (dB)",
+        "type": "text",
+        "default": "18"
       }
     ],
-    "assets": ["static_noise.wav"]
+    "depends_on": [],
+    "outputs": {
+      "master_csv": "birdnet_results.csv"
+    },
+    "assets": [
+      "00_config.py",
+      "Sanjay_Van_Birds.txt",
+      "static_noise.wav",
+      "rain_noise.wav",
+      "rainfall_model.joblib",
+      "label_encoder.joblib"
+    ]
   }
 ]

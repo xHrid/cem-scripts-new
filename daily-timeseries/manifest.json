@@ -1,0 +1,15 @@
+[
+  {
+    "id": "09_timeseries",
+    "name": "Daily Call Frequency Time Series",
+    "script_file": "09_daily_call_timeseries.py",
+    "description": "Generate per-species daily call count time series plots with data gap highlighting and a data availability heatmap.",
+    "inputs": [],
+    "parameters": [],
+    "depends_on": ["01_data_loading_and_filtering.py"],
+    "outputs": {},
+    "assets": [
+      "00_config.py"
+    ]
+  }
+]

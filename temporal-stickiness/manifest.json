@@ -1,0 +1,17 @@
+[
+  {
+    "id": "03_temporal",
+    "name": "Temporal Stickiness (Activity Regularity)",
+    "script_file": "03_temporal_stickiness.py",
+    "description": "Compute Activity Regularity per species using Spearman rank correlation of consecutive-day hourly activity vectors.",
+    "inputs": [],
+    "parameters": [],
+    "depends_on": ["01_data_loading_and_filtering.py"],
+    "outputs": {
+      "master_csv": "all_species_activity_regularity.csv"
+    },
+    "assets": [
+      "00_config.py"
+    ]
+  }
+]

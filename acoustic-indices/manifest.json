@@ -1,32 +1,33 @@
 [
   {
-    "id": "acoustic_indices",
-    "name": "2. Eco-Acoustic Indices (ADI, ACI, etc.)",
-    "script_file": "indices.py",
-    "description": "Calculates biodiversity indices from the audio spectra.",
+    "id": "05_indices",
+    "name": "Acoustic Indices",
+    "script_file": "05_acoustic_indices.py",
+    "description": "Compute 6 acoustic indices (ADI, ACI, AEI, NDSI, MFC, CLS) from raw audio with rain filtering and static noise removal.",
     "inputs": [
       {
         "type": "spot_date_range",
-        "label": "Select Spot & Date Range",
+        "label": "Select spots and date range",
         "valid_extensions": [".wav"]
       }
     ],
-    "depends_on": [],
     "parameters": [
       {
-        "id": "sampling_rule",
-        "label": "Sampling Rule",
-        "type": "select",
-        "options": ["2R4W", "5R5W", "30R30W"],
-        "default": "2R4W"
+        "id": "snr_db",
+        "label": "SNR for noise removal (dB)",
+        "type": "text",
+        "default": "18"
       }
     ],
+    "depends_on": [],
+    "outputs": {
+      "master_csv": "acoustic_indices.csv"
+    },
     "assets": [
-      "static_noise.wav", 
-      "rainfall_model.joblib", 
-      "label_encoder.joblib", 
-      "master_rainfall_model.joblib", 
-      "master_label_encoder.joblib"
+      "00_config.py",
+      "static_noise.wav",
+      "rainfall_model.joblib",
+      "label_encoder.joblib"
     ]
   }
 ]

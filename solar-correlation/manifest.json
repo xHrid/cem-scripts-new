@@ -1,0 +1,17 @@
+[
+  {
+    "id": "08_solar",
+    "name": "Solar Event Correlation",
+    "script_file": "08_solar_correlation.py",
+    "description": "Compute Pearson correlation between daily peak vocal activity time and sunrise/sunset times for each species.",
+    "inputs": [],
+    "parameters": [],
+    "depends_on": ["01_data_loading_and_filtering.py"],
+    "outputs": {
+      "master_csv": "solar_correlation_results.csv"
+    },
+    "assets": [
+      "00_config.py"
+    ]
+  }
+]
