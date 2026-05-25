@@ -194,9 +194,4 @@ def _run_watcher_mode():
 
 
 if __name__ == "__main__":
-    if "--output-dir" in sys.argv:
-        _run_watcher_mode()
-    else:
-        # Standalone mode
-        run_daily_timeseries("filtered_detections.csv", "results_timeseries",
-                             species_to_plot=SPECIES_TO_PLOT, max_species=MAX_SPECIES)
+    _run_watcher_mode()

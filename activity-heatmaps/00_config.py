@@ -1,16 +1,10 @@
 """
-Shared Configuration for All Acoustic Analysis Scripts
-========================================================
-Dual-mode: works standalone (folder walking) AND with watcher (CLI args).
-
-Standalone mode:
-    Edit AUDIO_ROOT and output dirs below. Scripts import and use
-    discover_audio_folders() to find WAV files.
-
-Watcher mode:
-    The watcher passes --datasets, --output-dir, --project-dir, etc.
-    Scripts call parse_common_args() to get CLI values. Dataset dirs
-    are passed directly — no folder walking needed.
+Shared Configuration for Acoustic Analysis Scripts (Webapp)
+============================================================
+Runs exclusively via the watcher/webapp CLI pipeline.
+The watcher passes --datasets, --output-dir, --project-dir, etc.
+Scripts call parse_common_args() to get CLI values. Dataset dirs
+are passed directly — no folder walking needed.
 """
 
 import argparse
@@ -20,14 +14,6 @@ import json
 import shutil
 import pandas as pd
 import librosa
-
-# =============================================================================
-# ROOT PATHS — Used in STANDALONE mode. Ignored when watcher passes CLI args.
-# =============================================================================
-
-AUDIO_ROOT = r"E:\Sanjay_van_data\raw_data\audio_raw"
-CLASSIFICATION_OUTPUT_DIR = r"E:\Sanjay_van_data\analysis-pipeline-hridayansh\results"
-INDICES_OUTPUT_DIR = r"E:\Sanjay_van_data\analysis-pipeline-hridayansh\results"
 
 # Asset files (resolved relative to this script's directory)
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -50,87 +36,7 @@ BIRDNET_MODEL_PATH = None
 TARGET_SR = 48000
 
 # =============================================================================
-# STANDALONE: Folder discovery (spot → date_range → duty_cycle → wavs)
-# =============================================================================
-
-SPOT_DIRS = {
-    "spot_1": os.path.join(AUDIO_ROOT, "spot_1_original_spot"),
-    "spot_2": os.path.join(AUDIO_ROOT, "spot_2_peacock_spot"),
-    "spot_3": os.path.join(AUDIO_ROOT, "spot_3_investigation_spot"),
-    "spot_4": os.path.join(AUDIO_ROOT, "spot_4_yoga_spot"),
-}
-
-
-def discover_audio_folders():
-    """Walk the audio root and find all date_range/duty_cycle folders with .wav files."""
-    folders = {}
-    for spot_key, spot_dir in SPOT_DIRS.items():
-        folders[spot_key] = []
-        if not os.path.isdir(spot_dir):
-            print(f"  WARNING: {spot_dir} not found")
-            continue
-        for date_range in sorted(os.listdir(spot_dir)):
-            date_path = os.path.join(spot_dir, date_range)
-            if not os.path.isdir(date_path):
-                continue
-            found_sub = False
-            for sub in os.listdir(date_path):
-                sub_path = os.path.join(date_path, sub)
-                if os.path.isdir(sub_path):
-                    wavs = [f for f in os.listdir(sub_path) if f.lower().endswith('.wav')]
-                    if wavs:
-                        folders[spot_key].append({
-                            "date_range": date_range,
-                            "duty_cycle": sub,
-                            "path": sub_path,
-                            "wav_count": len(wavs)
-                        })
-                        found_sub = True
-            if not found_sub:
-                wavs = [f for f in os.listdir(date_path) if f.lower().endswith('.wav')]
-                if wavs:
-                    folders[spot_key].append({
-                        "date_range": date_range,
-                        "duty_cycle": "unknown",
-                        "path": date_path,
-                        "wav_count": len(wavs)
-                    })
-    return folders
-
-
-def get_all_audio_paths():
-    """Return flat list of all audio folder paths across all spots."""
-    folders = discover_audio_folders()
-    return [entry["path"] for fl in folders.values() for entry in fl]
-
-
-def get_classification_csv_path(spot_key, date_range, duty_cycle):
-    """Generate expected classification CSV filename for a given recording session."""
-    return os.path.join(
-        CLASSIFICATION_OUTPUT_DIR,
-        f"{spot_key}_{date_range}_{duty_cycle}_classification.csv"
-    )
-
-
-def get_all_classification_csvs():
-    """Return list of all expected classification CSV paths."""
-    folders = discover_audio_folders()
-    csvs = []
-    for spot_key, folder_list in folders.items():
-        for entry in folder_list:
-            csvs.append(get_classification_csv_path(
-                spot_key, entry["date_range"], entry["duty_cycle"]
-            ))
-    return csvs
-
-
-def get_existing_classification_csvs():
-    """Return only classification CSVs that actually exist on disk."""
-    return [p for p in get_all_classification_csvs() if os.path.exists(p)]
-
-
-# =============================================================================
-# WATCHER INTEGRATION: Common CLI arg parser
+# CLI ARG PARSER
 # =============================================================================
 
 def parse_common_args(description="Analysis script"):
@@ -207,7 +113,7 @@ def save_processed_list(output_dir, processed_files):
 
 
 def resolve_detection_csv(args):
-    """Find the master detections CSV. Priority: CLI arg > project DB > CWD."""
+    """Find the master detections CSV. Priority: CLI arg > project DB."""
     if args.detection_csv and os.path.exists(args.detection_csv):
         return args.detection_csv
 
@@ -221,10 +127,6 @@ def resolve_detection_csv(args):
                                 "birdnet_results.csv")
         if os.path.exists(db_path2):
             return db_path2
-
-    # Standalone fallback
-    if os.path.exists("filtered_detections.csv"):
-        return "filtered_detections.csv"
 
     return None
 
@@ -494,32 +396,3 @@ def extract_spot_from_filename(filename):
     return None
 
 
-# =============================================================================
-# QUICK SUMMARY (run this file directly to verify setup)
-# =============================================================================
-if __name__ == "__main__":
-    print("=" * 60)
-    print("AUDIO DATA STRUCTURE DISCOVERY")
-    print("=" * 60)
-    folders = discover_audio_folders()
-    total_wavs = 0
-    for spot_key, folder_list in folders.items():
-        print(f"\n{spot_key}:")
-        for entry in folder_list:
-            print(f"  {entry['date_range']}/{entry['duty_cycle']}: "
-                  f"{entry['wav_count']} wav files")
-            total_wavs += entry["wav_count"]
-    print(f"\nTotal audio folders: {sum(len(v) for v in folders.values())}")
-    print(f"Total wav files: {total_wavs}")
-
-    print(f"\n{'=' * 60}")
-    print("EXISTING CLASSIFICATION CSVs")
-    print("=" * 60)
-    existing = get_existing_classification_csvs()
-    if existing:
-        for p in existing:
-            print(f"  {os.path.basename(p)}")
-    else:
-        print("  None found yet. Run Script 00b first.")
-
-    print(f"\nConfig OK. Ready to run pipeline.")

@@ -11,3 +11,4 @@ seaborn
 birdnetlib
 astral
 pytz
+tensorflow

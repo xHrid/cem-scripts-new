@@ -31,9 +31,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from importlib import import_module
 config = import_module("00_config")
 
-DETECTIONS_CSV = "filtered_detections.csv"
-INDICES_CSV = os.path.join(config.INDICES_OUTPUT_DIR, "combined_indices.csv")
-
 INDICES_TO_TEST = ['ADI', 'ACI', 'AEI', 'NDSI', 'MFC', 'CLS']
 CONFIDENCE_THRESHOLD = 0.5
 N_BOOTSTRAP = 1000
@@ -292,8 +289,4 @@ def _run_watcher_mode():
 
 
 if __name__ == "__main__":
-    if "--output-dir" in sys.argv:
-        _run_watcher_mode()
-    else:
-        # Standalone mode
-        run_analysis(DETECTIONS_CSV, INDICES_CSV, "results_indices_diversity")
+    _run_watcher_mode()

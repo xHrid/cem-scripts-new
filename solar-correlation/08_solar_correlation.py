@@ -238,8 +238,4 @@ def _run_watcher_mode():
 
 
 if __name__ == "__main__":
-    if "--output-dir" in sys.argv:
-        _run_watcher_mode()
-    else:
-        # Standalone mode
-        run_solar_correlation("filtered_detections.csv", "results_solar")
+    _run_watcher_mode()

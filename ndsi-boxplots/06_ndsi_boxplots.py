@@ -23,8 +23,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from importlib import import_module
 config = import_module("00_config")
 
-INDICES_DIR = config.INDICES_OUTPUT_DIR
-
 # Indices to plot
 INDICES_TO_PLOT = ['NDSI', 'ADI', 'ACI', 'AEI', 'MFC', 'CLS']
 
@@ -152,8 +150,4 @@ def _run_watcher_mode():
 
 
 if __name__ == "__main__":
-    if "--output-dir" in sys.argv:
-        _run_watcher_mode()
-    else:
-        # Standalone mode
-        run_boxplots(INDICES_DIR, "results_ndsi_boxplots")
+    _run_watcher_mode()

@@ -43,9 +43,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from importlib import import_module
 config = import_module("00_config")
 
-# Standalone defaults
-INPUT_CSV = "filtered_detections.csv"
-
 # Thresholds from paper Section 4.3.4
 SCI_THRESHOLD = 0.9
 KURTOSIS_THRESHOLD = 15
@@ -281,8 +278,4 @@ def _run_watcher_mode():
 
 
 if __name__ == "__main__":
-    if "--output-dir" in sys.argv:
-        _run_watcher_mode()
-    else:
-        # Standalone mode
-        run_migratory_classification(INPUT_CSV, "results_migratory")
+    _run_watcher_mode()

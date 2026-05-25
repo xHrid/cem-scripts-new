@@ -3,9 +3,8 @@ Script 01: Data Loading and Filtering Pipeline
 ================================================
 Loads BirdNET classification CSVs, applies multi-stage filtering:
   - Step 1: Taxonomic verification (eBird checklist)
-  - Step 2: Confidence thresholding (>0.3)
-  - Step 3: Minimum activity (>10 total detections)
-  - Step 4: Temporal consistency (>=5 active days with >10 daily calls)
+  - Step 2: Confidence thresholding (>=0.3)
+  - Step 3: Minimum activity (>=10 total detections)
 
 Output: filtered DataFrame saved as 'filtered_detections.csv'
 Paper Reference: Section 3.2.1, Section 4.3 intro (91 confirmed species)
@@ -32,7 +31,7 @@ EBIRD_SPECIES_FILE = config.EBIRD_SPECIES_FILE
 # =============================================================================
 
 def filter_detections(results_df, ebird_file=None):
-    """Apply 4-step filtering pipeline. Returns filtered DataFrame."""
+    """Apply 3-step filtering pipeline. Returns filtered DataFrame."""
 
     # -- Preprocessing: extract Spot & Date from filename --
     results_df['Spot'] = results_df['filename'].str.extract(
@@ -58,28 +57,18 @@ def filter_detections(results_df, ebird_file=None):
     else:
         print(f"  WARNING: eBird species file not found. Skipping taxonomic filter.")
 
-    # -- Step 2: Confidence Thresholding (>0.3) --
-    print("\nStep 2: Confidence thresholding (>0.3)...")
+    # -- Step 2: Confidence Thresholding (>=0.3) --
+    print("\nStep 2: Confidence thresholding (>=0.3)...")
     before = len(results_df)
     results_df = results_df[results_df['confidence'] >= 0.3].copy()
     print(f"  Detections before: {before}, after: {len(results_df)}")
 
-    # -- Step 3: Minimum Activity (>10 total detections) --
-    print("\nStep 3: Minimum total detections (>10)...")
+    # -- Step 3: Minimum Activity (>=10 total detections) --
+    print("\nStep 3: Minimum total detections (>=10)...")
     species_counts = results_df.groupby('common_name').size()
-    valid_species = species_counts[species_counts > 10].index
+    valid_species = species_counts[species_counts >= 10].index
     before = results_df['common_name'].nunique()
     results_df = results_df[results_df['common_name'].isin(valid_species)].copy()
-    print(f"  Species before: {before}, after: {results_df['common_name'].nunique()}")
-
-    # -- Step 4: Temporal Consistency (>=5 days with >10 daily calls) --
-    print("\nStep 4: Temporal consistency (>=5 active days)...")
-    daily_counts = results_df.groupby(['common_name', 'Date_Only']).size().reset_index(name='daily_calls')
-    high_activity_days = daily_counts[daily_counts['daily_calls'] >= 10]
-    bird_day_counts = high_activity_days.groupby('common_name').size().reset_index(name='count_of_valid_days')
-    valid_birds = bird_day_counts[bird_day_counts['count_of_valid_days'] >= 5]['common_name'].unique()
-    before = results_df['common_name'].nunique()
-    results_df = results_df[results_df['common_name'].isin(valid_birds)].copy()
     print(f"  Species before: {before}, after: {results_df['common_name'].nunique()}")
 
     return results_df
@@ -105,7 +94,7 @@ def _run_watcher_mode():
 
     Flow:
       1. Load birdnet_results aggregate (the dependency)
-      2. Re-apply 4-step filtering to the FULL birdnet aggregate
+      2. Re-apply 3-step filtering to the FULL birdnet aggregate
          (filtering depends on global stats — can't be incremental)
       3. Save result as filtered_detections aggregate
       4. Output date-range-filtered subset to job output dir
@@ -179,39 +168,7 @@ def _run_watcher_mode():
 
 
 # =============================================================================
-# STANDALONE MODE
-# =============================================================================
-
-def _run_standalone_mode():
-    """Original mode: discover classification CSVs, concatenate, filter, save."""
-    CLASSIFICATION_FILES = config.get_existing_classification_csvs()
-
-    print("Loading classification files...")
-    dfs = []
-    for f in CLASSIFICATION_FILES:
-        if os.path.exists(f):
-            dfs.append(pd.read_csv(f))
-        else:
-            print(f"  WARNING: File not found: {f}")
-
-    if not dfs:
-        raise FileNotFoundError("No classification files found. Run 00b first.")
-
-    results_df = pd.concat(dfs, ignore_index=True)
-    print(f"Total raw detections loaded: {len(results_df)}")
-
-    filtered = filter_detections(results_df, ebird_file=EBIRD_SPECIES_FILE)
-    print_summary(filtered)
-
-    filtered.to_csv("filtered_detections.csv", index=False)
-    print(f"\nSaved to: filtered_detections.csv")
-
-
-# =============================================================================
-# ENTRY POINT — auto-detect mode
+# ENTRY POINT
 # =============================================================================
 if __name__ == "__main__":
-    if "--output-dir" in sys.argv:
-        _run_watcher_mode()
-    else:
-        _run_standalone_mode()
+    _run_watcher_mode()

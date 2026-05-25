@@ -37,14 +37,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from importlib import import_module
 config = import_module("00_config")
 
-DATASET_PATHS = config.get_all_audio_paths()
 STATIC_NOISE_PATH = config.STATIC_NOISE_PATH
 TARGET_SR = config.TARGET_SR
-OUTPUT_DIR = config.INDICES_OUTPUT_DIR
 MODEL_PATH = config.RAINFALL_MODEL_PATH
 ENCODER_PATH = config.RAINFALL_ENCODER_PATH
-
-os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # =============================================================================
 # HELPER FUNCTIONS
@@ -139,28 +135,6 @@ def compute_acoustic_indices(y, sr):
     return ADI, ACI, AEI, NDSI, MFC, CLS
 
 
-def segment_audio(audio, folder_type="2R4W", fs=48000):
-    """Segment audio based on recording duty cycle."""
-    two_min_samples = int(120 * fs)
-    segments = []
-
-    if "2R4W" in folder_type:
-        if len(audio) >= two_min_samples:
-            segments.append(audio[:two_min_samples])
-    elif "5R5W" in folder_type:
-        if len(audio) >= two_min_samples:
-            segments.append(audio[:two_min_samples])
-    elif "30R30W" in folder_type:
-        num_chunks = 10
-        for start in range(0, len(audio), two_min_samples):
-            end = start + two_min_samples
-            if end <= len(audio):
-                segments.append(audio[start:end])
-            if len(segments) >= num_chunks:
-                break
-
-    return segments if segments else None
-
 
 def predict_is_heavy_rain(segment_audio_data, sr, model, le):
     """Check if audio segment contains heavy rain using trained classifier."""
@@ -186,16 +160,6 @@ def predict_is_heavy_rain(segment_audio_data, sr, model, le):
             return True
     return False
 
-
-def extract_path_info(dataset_path):
-    """Extract spot name, date range, and duty cycle code from path."""
-    parts = dataset_path.replace('\\', '/').split('/')
-    code = parts[-1] if len(parts) > 0 else ""
-    date_range = parts[-2] if len(parts) > 1 else ""
-    spot_folder = parts[-3] if len(parts) > 2 else ""
-    spot_match = re.search(r'spot[_\s]*(\d+)', spot_folder, re.IGNORECASE)
-    spot = f"spot{spot_match.group(1)}" if spot_match else "spot_unknown"
-    return spot, date_range, code
 
 
 # =============================================================================
@@ -372,83 +336,7 @@ def _run_watcher_mode():
 
 
 # =============================================================================
-# STANDALONE MODE (original folder-walking behaviour)
-# =============================================================================
-
-def _run_standalone_mode():
-    """Original standalone execution using 00_config folder discovery."""
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-    noise_clip_static, _ = librosa.load(STATIC_NOISE_PATH, sr=TARGET_SR)
-
-    rain_model, rain_encoder = None, None
-    if os.path.exists(MODEL_PATH) and os.path.exists(ENCODER_PATH):
-        rain_model = joblib.load(MODEL_PATH)
-        rain_encoder = joblib.load(ENCODER_PATH)
-        print("Rainfall classifier loaded.")
-    else:
-        print("WARNING: Rainfall model not found. Skipping rain filtering.")
-
-    for dataset_path in DATASET_PATHS:
-        print(f"\n{'='*60}")
-        print(f"Processing: {dataset_path}")
-        spot, date_range, code = extract_path_info(dataset_path)
-        output_filename = f"{spot}_{date_range}_{code}_indices.csv"
-        output_path = os.path.join(OUTPUT_DIR, output_filename)
-
-        results = []
-        wav_files = sorted([f for f in os.listdir(dataset_path) if f.lower().endswith('.wav')])
-        print(f"Found {len(wav_files)} WAV files")
-
-        for filename in tqdm(wav_files, desc=f"  {spot}"):
-            year, month, date, hour, minute = extract_datetime_from_filename(filename)
-            filepath = os.path.join(dataset_path, filename)
-
-            try:
-                audio, sr = librosa.load(filepath, sr=TARGET_SR)
-            except Exception as e:
-                print(f"  ERROR loading {filename}: {e}")
-                continue
-
-            audio_denoised = remove_static_noise(audio, noise_clip_static)
-            segments = segment_audio(audio_denoised, folder_type=code)
-            if segments is None:
-                continue
-
-            for i, segment in enumerate(segments):
-                if rain_model and rain_encoder:
-                    if predict_is_heavy_rain(segment, sr, rain_model, rain_encoder):
-                        continue
-                ADI, ACI, AEI, NDSI, MFC, CLS = compute_acoustic_indices(segment, sr)
-                results.append({
-                    "filename": filename,
-                    "Segment": i + 1,
-                    "Year": year,
-                    "Month": month,
-                    "Date": date,
-                    "Hour": hour,
-                    "Minute": minute,
-                    "ADI": ADI,
-                    "ACI": ACI,
-                    "AEI": AEI,
-                    "NDSI": NDSI,
-                    "MFC": MFC,
-                    "CLS": CLS
-                })
-
-        results_df = pd.DataFrame(results)
-        results_df.to_csv(output_path, index=False)
-        print(f"  Saved {len(results_df)} rows to: {output_path}")
-
-    print("\nDone. All acoustic indices computed.")
-
-
-# =============================================================================
-# ENTRY POINT — auto-detect mode
+# ENTRY POINT
 # =============================================================================
 if __name__ == "__main__":
-    import json
-    if "--output-dir" in sys.argv:
-        _run_watcher_mode()
-    else:
-        _run_standalone_mode()
+    _run_watcher_mode()

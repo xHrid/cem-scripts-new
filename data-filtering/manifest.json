@@ -3,7 +3,7 @@
     "id": "01_filter",
     "name": "Data Filtering Pipeline",
     "script_file": "01_data_loading_and_filtering.py",
-    "description": "Apply 4-step filtering to BirdNET detections: eBird taxonomic verification, confidence thresholding (>0.3), minimum activity (>10 detections), temporal consistency (>=5 active days).",
+    "description": "Apply 3-step filtering to BirdNET detections: eBird taxonomic verification, confidence thresholding (>=0.3), minimum activity (>=10 detections).",
     "inputs": [
       {
         "type": "spot_date_range",

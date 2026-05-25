@@ -57,11 +57,8 @@ TARGET_SR = config.TARGET_SR
 SNR_DB = 18
 STATIC_NOISE_PATH = config.STATIC_NOISE_PATH
 RAIN_NOISE_PATH = config.RAIN_NOISE_PATH
-OUTPUT_DIR = config.CLASSIFICATION_OUTPUT_DIR
 LAT = config.LATITUDE
 LON = config.LONGITUDE
-
-os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # =============================================================================
 # DENOISING FUNCTIONS (from BirdNet_Predictions.ipynb Cell 7 — exact copy)
@@ -203,29 +200,6 @@ def _get_worker_analyzer():
 
 
 # =============================================================================
-# DATETIME EXTRACTION (from calculate_indices.ipynb Cell 2)
-# =============================================================================
-def extract_hour_from_filename(filename):
-    """Extract hour from filename pattern: ..._YYYYMMDD_HHMMSS.wav"""
-    match = re.search(r'_(\d{6})\.wav$', filename)
-    if match:
-        return int(match.group(1)[:2])
-    return None
-
-
-def extract_path_info(dataset_path):
-    """Extract spot name, date range, and duty cycle code from path.
-    Source: calculate_indices.ipynb Cell 5"""
-    parts = dataset_path.replace('\\', '/').split('/')
-    code = parts[-1] if len(parts) > 0 else ""
-    date_range = parts[-2] if len(parts) > 1 else ""
-    spot_folder = parts[-3] if len(parts) > 2 else ""
-    spot_match = re.search(r'spot[_\s]*(\d+)', spot_folder, re.IGNORECASE)
-    spot = f"spot_{spot_match.group(1)}" if spot_match else "spot_unknown"
-    return spot, date_range, code
-
-
-# =============================================================================
 # MAIN PROCESSING LOOP
 # (Batch pattern from calculate_indices.ipynb Cell 8, calling analyze_bird_audio
 #  from BirdNet_Predictions.ipynb Cell 7)
@@ -359,81 +333,5 @@ def _run_watcher_mode():
     print(f"Processed {len(all_attempted_files)} new files this run.")
 
 
-def _run_standalone_mode():
-    """Original standalone entry point — walks folder structure from 00_config."""
-    import multiprocessing
-
-    print("Loading noise reference clips...")
-    noise_clip, _ = librosa.load(STATIC_NOISE_PATH, sr=TARGET_SR)
-    rain_noise_clip, _ = librosa.load(RAIN_NOISE_PATH, sr=TARGET_SR)
-
-    total_cpus = multiprocessing.cpu_count()
-    N_WORKERS = max(1, min(total_cpus // 2, 4))
-    THREADS_PER_WORKER = max(1, total_cpus // N_WORKERS)
-    print(f"Parallelism: {N_WORKERS} workers × {THREADS_PER_WORKER} TFLite threads "
-          f"(detected {total_cpus} logical CPUs)")
-
-    audio_folders = config.discover_audio_folders()
-    total_folders = sum(len(v) for v in audio_folders.values())
-    print(f"\nFound {total_folders} recording sessions across {len(audio_folders)} spots")
-
-    for spot_key, folder_list in audio_folders.items():
-        for entry in folder_list:
-            dataset_path = entry["path"]
-            date_range = entry["date_range"]
-            duty_cycle = entry["duty_cycle"]
-
-            output_filename = f"{spot_key}_{date_range}_{duty_cycle}_classification.csv"
-            output_path = os.path.join(OUTPUT_DIR, output_filename)
-
-            if os.path.exists(output_path):
-                print(f"\nSKIPPING (already exists): {output_filename}")
-                continue
-
-            print(f"\n{'='*60}")
-            print(f"Processing: {spot_key} / {date_range} / {duty_cycle}")
-            print(f"  Path: {dataset_path}")
-
-            wav_files = sorted([f for f in os.listdir(dataset_path) if f.lower().endswith('.wav')])
-            tasks = []
-            for filename in wav_files:
-                filepath = os.path.join(dataset_path, filename)
-                hour = extract_hour_from_filename(filename)
-                tasks.append((filepath, filename, LAT, LON, noise_clip, rain_noise_clip, hour))
-
-            all_detections = []
-            with ProcessPoolExecutor(
-                max_workers=N_WORKERS,
-                initializer=_init_worker,
-                initargs=(THREADS_PER_WORKER,),
-            ) as executor:
-                futures = {executor.submit(_process_single_file, t): t[1] for t in tasks}
-                with tqdm(total=len(tasks), desc=f"  {spot_key}/{date_range}") as pbar:
-                    for future in as_completed(futures):
-                        result = future.result()
-                        if result is not None:
-                            all_detections.append(result)
-                        pbar.update(1)
-
-            if all_detections:
-                results_df = pd.concat(all_detections, ignore_index=True)
-                if 'common_name' in results_df.columns and 'label' not in results_df.columns:
-                    results_df['label'] = results_df['common_name']
-                results_df.to_csv(output_path, index=False)
-                print(f"  Saved {len(results_df)} detections to: {output_filename}")
-            else:
-                print(f"  WARNING: No detections found.")
-
-    print(f"\n{'='*60}")
-    print("BirdNET prediction pipeline complete.")
-    print(f"Classification CSVs saved to: {OUTPUT_DIR}")
-    existing = config.get_existing_classification_csvs()
-    print(f"Total classification CSVs: {len(existing)}")
-
-
 if __name__ == "__main__":
-    # Detect mode: if --output-dir is in sys.argv, watcher launched us
-    if "--output-dir" in sys.argv:
-        _run_watcher_mode()
-    else:
-        _run_standalone_mode()
+    _run_watcher_mode()
