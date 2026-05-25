@@ -1,7 +1,6 @@
 [
   "birdnet-inference",
   "acoustic-indices",
-  "data-filtering",
   "activity-heatmaps",
   "temporal-stickiness",
   "spatial-stickiness",

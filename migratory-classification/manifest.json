@@ -8,16 +8,21 @@
       {
         "type": "spot_date_range",
         "label": "Select spots and date range",
-        "valid_extensions": [".wav"]
+        "valid_extensions": [
+          ".wav"
+        ]
       }
     ],
     "parameters": [],
-    "depends_on": ["01_filter"],
+    "depends_on": [
+      "00b_birdnet"
+    ],
     "outputs": {
       "master_csv": "migratory_classification_all_species.csv"
     },
     "assets": [
-      "00_config.py"
+      "00_config.py",
+      "Sanjay_Van_Birds.txt"
     ]
   }
 ]

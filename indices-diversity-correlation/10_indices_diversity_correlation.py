@@ -236,31 +236,22 @@ def _resolve_dependency_aggregate(args, dep_filename):
 
 
 def _run_watcher_mode():
-    """Aggregate-aware watcher mode for indices-diversity correlation.
+    """Watcher mode: inline-filter birdnet data + load acoustic indices.
 
-    This script needs BOTH filtered_detections and acoustic_indices.
+    This script needs BOTH filtered detections and acoustic_indices.
     """
     args = config.parse_common_args(description="10 – Indices vs Diversity (watcher)")
     os.makedirs(args.output_dir, exist_ok=True)
 
-    # --- Resolve detections input ---
-    det_agg_path = _resolve_dependency_aggregate(args, "filtered_detections.csv")
-    if det_agg_path:
-        print(f"Loading detections from aggregate: {det_agg_path}")
-        det_df = config.load_aggregate(det_agg_path)
-        det_df = config.filter_aggregate_for_output(det_df, args.start_date, args.end_date, args.spots)
-        if det_df.empty:
-            print("ERROR: Detections aggregate is empty after filtering.")
-            sys.exit(1)
-        det_csv = os.path.join(args.output_dir, "_filtered_detections.csv")
-        det_df.to_csv(det_csv, index=False)
-    else:
-        det_csv = config.resolve_detection_csv(args)
-        if not det_csv:
-            print("ERROR: No filtered_detections.csv found. Run 01 first.")
-            sys.exit(1)
+    # --- Detections: inline-filter from birdnet aggregate ---
+    det_df = config.load_filtered_detections(args)
+    if det_df.empty:
+        print("ERROR: No data after filtering. Run BirdNET inference first.")
+        sys.exit(1)
+    det_csv = os.path.join(args.output_dir, "_filtered_detections.csv")
+    det_df.to_csv(det_csv, index=False)
 
-    # --- Resolve indices input ---
+    # --- Resolve indices input (still from acoustic_indices aggregate) ---
     idx_agg_path = _resolve_dependency_aggregate(args, "acoustic_indices.csv")
     if idx_agg_path:
         print(f"Loading indices from aggregate: {idx_agg_path}")

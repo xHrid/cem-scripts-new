@@ -409,3 +409,126 @@ def extract_spot_from_filename(filename):
     return None
 
 
+# =============================================================================
+# INLINE DATA FILTERING (replaces standalone 01_data_loading_and_filtering.py)
+# =============================================================================
+
+def filter_detections(results_df, ebird_file=None):
+    """Apply 3-step filtering pipeline to BirdNET detections.
+
+    Steps:
+      1. Taxonomic verification (eBird checklist)
+      2. Confidence thresholding (>=0.3)
+      3. Minimum activity (>=10 total detections)
+
+    Returns filtered DataFrame with Spot, Date, Date_Only columns added.
+    """
+    # -- Preprocessing: extract Spot & Date from filename --
+    results_df['Spot'] = results_df['filename'].str.extract(
+        r'(SPOT\d+)', expand=False
+    ).str.lower().str.replace('spot', 'spot_')
+
+    date_info = results_df['filename'].str.extract(r'_(\d{8})_')
+    results_df['Date'] = pd.to_datetime(date_info[0], format='%Y%m%d')
+    results_df.dropna(subset=['Spot', 'Date'], inplace=True)
+    results_df['Date_Only'] = results_df['Date'].dt.date
+
+    print(f"After preprocessing: {len(results_df)} detections")
+    print(f"Spots found: {sorted(results_df['Spot'].unique())}")
+
+    # -- Step 1: Taxonomic Verification (eBird checklist) --
+    print("\nStep 1: Taxonomic verification...")
+    if ebird_file and os.path.exists(ebird_file):
+        with open(ebird_file, 'r') as file:
+            sanjay_van_birds = [line.strip().split('_')[1] for line in file if '_' in line]
+        before = results_df['common_name'].nunique()
+        results_df = results_df[results_df['common_name'].isin(sanjay_van_birds)].copy()
+        print(f"  Species before: {before}, after eBird filter: {results_df['common_name'].nunique()}")
+    else:
+        print(f"  WARNING: eBird species file not found. Skipping taxonomic filter.")
+
+    # -- Step 2: Confidence Thresholding (>=0.3) --
+    print("\nStep 2: Confidence thresholding (>=0.3)...")
+    before = len(results_df)
+    results_df = results_df[results_df['confidence'] >= 0.3].copy()
+    print(f"  Detections before: {before}, after: {len(results_df)}")
+
+    # -- Step 3: Minimum Activity (>=10 total detections) --
+    print("\nStep 3: Minimum total detections (>=10)...")
+    species_counts = results_df.groupby('common_name').size()
+    valid_species = species_counts[species_counts >= 10].index
+    before = results_df['common_name'].nunique()
+    results_df = results_df[results_df['common_name'].isin(valid_species)].copy()
+    print(f"  Species before: {before}, after: {results_df['common_name'].nunique()}")
+
+    return results_df
+
+
+def load_filtered_detections(args):
+    """Load birdnet aggregate and apply inline filtering.
+
+    This replaces the standalone data-filtering script. Downstream scripts
+    call this directly to get filtered detections without an intermediate CSV.
+
+    Args:
+        args: Namespace from parse_common_args() with aggregate_file, project_dir,
+              start_date, end_date, spots.
+
+    Returns:
+        Filtered DataFrame ready for analysis, or empty DataFrame on failure.
+    """
+    # --- Locate birdnet_results.csv aggregate ---
+    birdnet_path = None
+    if args.aggregate_file:
+        agg_dir = os.path.dirname(args.aggregate_file)
+        candidate = os.path.join(agg_dir, "birdnet_results.csv")
+        if os.path.exists(candidate):
+            birdnet_path = candidate
+
+    if not birdnet_path:
+        # Try project database
+        if args.project_dir:
+            db_path = os.path.join(args.project_dir, "system", "database",
+                                   "birdnet_results.csv")
+            if os.path.exists(db_path):
+                birdnet_path = db_path
+
+    if not birdnet_path or not os.path.exists(birdnet_path):
+        print("ERROR: No birdnet_results.csv found. Run BirdNET inference first.")
+        return pd.DataFrame()
+
+    print(f"Loading birdnet aggregate: {birdnet_path}")
+    raw_df = load_aggregate(birdnet_path)
+
+    # Strip _processed_only marker rows
+    if _PROCESSED_ONLY_COL in raw_df.columns:
+        raw_df = raw_df[raw_df[_PROCESSED_ONLY_COL] != True].drop(columns=[_PROCESSED_ONLY_COL])
+
+    if raw_df.empty:
+        print("ERROR: Birdnet aggregate has no detection data.")
+        return pd.DataFrame()
+
+    print(f"Total raw detections: {len(raw_df)}")
+
+    # --- Apply 3-step filtering ---
+    ebird_file = EBIRD_SPECIES_FILE
+    if not os.path.exists(ebird_file):
+        # Try script directory fallback
+        ebird_file = os.path.join(_SCRIPT_DIR, "Sanjay_Van_Birds.txt")
+
+    filtered = filter_detections(raw_df, ebird_file=ebird_file)
+
+    if filtered.empty:
+        print("WARNING: No detections survived filtering.")
+        return pd.DataFrame()
+
+    # --- Apply date range and spot filters ---
+    if args.start_date or args.end_date or args.spots:
+        filtered = filter_aggregate_for_output(
+            filtered, args.start_date, args.end_date, args.spots
+        )
+
+    print(f"Final filtered detections: {len(filtered)}")
+    return filtered
+
+

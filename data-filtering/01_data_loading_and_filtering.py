@@ -125,6 +125,11 @@ def _run_watcher_mode():
     print(f"Loading birdnet aggregate: {birdnet_aggregate_path}")
     raw_df = config.load_aggregate(birdnet_aggregate_path)
 
+    # Capture ALL input filenames (including _processed_only markers) BEFORE
+    # stripping them — these are files the upstream script has already handled
+    # and we must track them as processed even if filtering drops all detections.
+    all_input_files = set(raw_df["filename"].dropna().unique()) if "filename" in raw_df.columns else set()
+
     # Strip _processed_only marker rows
     if "_processed_only" in raw_df.columns:
         raw_df = raw_df[raw_df["_processed_only"] != True].drop(columns=["_processed_only"])
@@ -148,6 +153,15 @@ def _run_watcher_mode():
     aggregate_path = config.resolve_aggregate_path(args, "filtered_detections.csv")
     print(f"Writing filtered aggregate: {aggregate_path}")
     config._atomic_csv_write(filtered, aggregate_path)
+
+    # --- Mark files that were processed but had 0 surviving detections ---
+    # Without this, the UI cache won't include these files and will report
+    # them as "missing dependencies" for downstream scripts.
+    surviving_files = set(filtered["filename"].dropna().unique()) if "filename" in filtered.columns else set()
+    empty_files = all_input_files - surviving_files
+    if empty_files:
+        print(f"Marking {len(empty_files)} files with 0 surviving detections as processed")
+        config.mark_empty_files(list(empty_files), aggregate_path)
 
     # --- Output date-filtered subset ---
     output_df = config.filter_aggregate_for_output(

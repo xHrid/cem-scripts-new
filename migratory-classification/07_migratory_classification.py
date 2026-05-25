@@ -239,40 +239,20 @@ def run_migratory_classification(detection_csv, output_dir):
 # ENTRY POINT — auto-detect mode
 # =============================================================================
 
-def _resolve_dependency_aggregate(args, dep_filename):
-    """Find a dependency aggregate CSV. Priority: sibling of --aggregate-file > project DB."""
-    if args.aggregate_file:
-        agg_dir = os.path.dirname(args.aggregate_file)
-        candidate = os.path.join(agg_dir, dep_filename)
-        if os.path.exists(candidate):
-            return candidate
-    return None
-
-
 def _run_watcher_mode():
-    """Aggregate-aware watcher mode for migratory classification."""
+    """Watcher mode: load birdnet aggregate, filter inline, classify."""
     args = config.parse_common_args(description="07 – Migratory Classification (watcher)")
     os.makedirs(args.output_dir, exist_ok=True)
 
-    # Try aggregate first, fall back to legacy resolution
-    agg_path = _resolve_dependency_aggregate(args, "filtered_detections.csv")
-    if agg_path:
-        print(f"Loading from aggregate: {agg_path}")
-        df = config.load_aggregate(agg_path)
-        df = config.filter_aggregate_for_output(df, args.start_date, args.end_date, args.spots)
-        if df.empty:
-            print("ERROR: Aggregate is empty after filtering.")
-            sys.exit(1)
-        tmp_csv = os.path.join(args.output_dir, "_filtered_input.csv")
-        df.to_csv(tmp_csv, index=False)
-        run_migratory_classification(tmp_csv, args.output_dir)
-        os.remove(tmp_csv)
-    else:
-        detection_csv = config.resolve_detection_csv(args)
-        if not detection_csv:
-            print("ERROR: No filtered_detections.csv found. Run 01 first.")
-            sys.exit(1)
-        run_migratory_classification(detection_csv, args.output_dir)
+    df = config.load_filtered_detections(args)
+    if df.empty:
+        print("ERROR: No data after filtering. Run BirdNET inference first.")
+        sys.exit(1)
+
+    tmp_csv = os.path.join(args.output_dir, "_filtered_input.csv")
+    df.to_csv(tmp_csv, index=False)
+    run_migratory_classification(tmp_csv, args.output_dir)
+    os.remove(tmp_csv)
 
     config.save_processed_list(args.output_dir, ["aggregate"])
 
