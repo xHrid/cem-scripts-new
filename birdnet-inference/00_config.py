@@ -494,7 +494,8 @@ def load_filtered_detections(args):
                 birdnet_path = db_path
 
     if not birdnet_path or not os.path.exists(birdnet_path):
-        print("ERROR: No birdnet_results.csv found. Run BirdNET inference first.")
+        print("ERROR: No birdnet_results.csv found. Run BirdNET inference first.",
+              file=sys.stderr)
         return pd.DataFrame()
 
     print(f"Loading birdnet aggregate: {birdnet_path}")
@@ -505,7 +506,8 @@ def load_filtered_detections(args):
         raw_df = raw_df[raw_df[_PROCESSED_ONLY_COL] != True].drop(columns=[_PROCESSED_ONLY_COL])
 
     if raw_df.empty:
-        print("ERROR: Birdnet aggregate has no detection data.")
+        print("ERROR: Birdnet aggregate has no detection data.",
+              file=sys.stderr)
         return pd.DataFrame()
 
     print(f"Total raw detections: {len(raw_df)}")

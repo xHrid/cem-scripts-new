@@ -246,7 +246,8 @@ def _run_watcher_mode():
     # --- Detections: inline-filter from birdnet aggregate ---
     det_df = config.load_filtered_detections(args)
     if det_df.empty:
-        print("ERROR: No data after filtering. Run BirdNET inference first.")
+        print("ERROR: No data after filtering. Run BirdNET inference first.",
+              file=sys.stderr)
         sys.exit(1)
     det_csv = os.path.join(args.output_dir, "_filtered_detections.csv")
     det_df.to_csv(det_csv, index=False)
@@ -258,14 +259,16 @@ def _run_watcher_mode():
         idx_df = config.load_aggregate(idx_agg_path)
         idx_df = config.filter_aggregate_for_output(idx_df, args.start_date, args.end_date, args.spots)
         if idx_df.empty:
-            print("ERROR: Indices aggregate is empty after filtering.")
+            print("ERROR: Indices aggregate is empty after filtering.",
+                  file=sys.stderr)
             sys.exit(1)
         idx_csv = os.path.join(args.output_dir, "_filtered_indices.csv")
         idx_df.to_csv(idx_csv, index=False)
     else:
         idx_csv = config.resolve_indices_csv(args)
         if not idx_csv:
-            print("ERROR: No acoustic indices CSV found. Run 05 first.")
+            print("ERROR: No acoustic indices CSV found. Run 05 first.",
+                  file=sys.stderr)
             sys.exit(1)
 
     run_analysis(det_csv, idx_csv, args.output_dir)
@@ -280,4 +283,11 @@ def _run_watcher_mode():
 
 
 if __name__ == "__main__":
-    _run_watcher_mode()
+    import traceback
+    try:
+        _run_watcher_mode()
+    except SystemExit:
+        raise
+    except Exception:
+        traceback.print_exc()
+        sys.exit(1)

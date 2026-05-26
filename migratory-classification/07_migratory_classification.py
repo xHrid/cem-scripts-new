@@ -246,7 +246,8 @@ def _run_watcher_mode():
 
     df = config.load_filtered_detections(args)
     if df.empty:
-        print("ERROR: No data after filtering. Run BirdNET inference first.")
+        print("ERROR: No data after filtering. Run BirdNET inference first.",
+              file=sys.stderr)
         sys.exit(1)
 
     tmp_csv = os.path.join(args.output_dir, "_filtered_input.csv")
@@ -258,4 +259,11 @@ def _run_watcher_mode():
 
 
 if __name__ == "__main__":
-    _run_watcher_mode()
+    import traceback
+    try:
+        _run_watcher_mode()
+    except SystemExit:
+        raise
+    except Exception:
+        traceback.print_exc()
+        sys.exit(1)
