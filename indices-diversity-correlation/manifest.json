@@ -22,8 +22,7 @@
       "master_csv": "combined_indices_diversity.csv"
     },
     "assets": [
-      "00_config.py",
-      "Sanjay_Van_Birds.txt"
+      "00_config.py"
     ]
   }
 ]

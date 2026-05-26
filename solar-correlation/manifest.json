@@ -21,8 +21,7 @@
       "master_csv": "solar_correlation_results.csv"
     },
     "assets": [
-      "00_config.py",
-      "Sanjay_Van_Birds.txt"
+      "00_config.py"
     ]
   }
 ]
