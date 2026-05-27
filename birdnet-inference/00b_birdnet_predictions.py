@@ -1,337 +1,326 @@
 """
-Script 00b: BirdNET Species Classification from Raw Audio
-==========================================================
-Processes raw WAV recordings through:
-  1. Static noise removal (SNR-scaled subtraction + spectral gating)
-  2. Rain noise removal (same technique, different reference)
-  3. BirdNET species identification via birdnetlib
-  4. Export per-session classification CSV
-
-Source: BirdNet_Predictions.ipynb
-  - Cell 7: analyze_bird_audio(), remove_static_noise(), remove_rain_noise()
-  - Cell 4: TFLite GPU delegate setup
-  - Batch loop pattern from calculate_indices.ipynb Cell 8 (iterate WAVs in folder)
-
-Output CSVs contain columns:
-  filename, common_name, scientific_name, label, confidence, start_time, end_time, hour
-
-These CSVs feed into Script 01 (filtering pipeline).
-
-Performance notes (vs original notebook code):
-  - BirdNET Analyzer loaded ONCE, reused across all files (was per-file = ~60s waste each)
-  - RecordingBuffer used instead of temp-file + Recording (skips redundant librosa.load)
-  - TFLite interpreter threads increased to match available CPU cores
-  - Files within each session processed in parallel via ProcessPoolExecutor
-  - Verbose birdnetlib console output suppressed for cleaner progress bars
+00b: BirdNET Predictions Pipeline
+===================================
+Three-part pipeline:
+  1. File listing  — discover, filter, deduplicate WAV files
+  2. Main pipeline — run BirdNET on new files, append to aggregate CSV
+  3. Output CSV    — filtered subset of aggregate for requested range
 """
 
 import os
 import re
-import sys
 import numpy as np
 import pandas as pd
+import soundfile as sf
 import librosa
+from datetime import date
 from tqdm import tqdm
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import io
+import contextlib
+import multiprocessing
 
-# Suppress verbose TF/birdnetlib logging BEFORE importing tensorflow
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
 import warnings
-warnings.filterwarnings('ignore', message='.*tf.lite.Interpreter is deprecated.*')
+warnings.filterwarnings("ignore", message=".*tf.lite.Interpreter is deprecated.*")
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="tensorflow")
 
-# --- birdnetlib imports ---
 from birdnetlib.main import RecordingBuffer
 from birdnetlib.analyzer import Analyzer
 
-# --- Shared config ---
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from importlib import import_module
 config = import_module("00_config")
 
-# =============================================================================
-# CONFIGURATION
-# =============================================================================
-TARGET_SR = config.TARGET_SR
-SNR_DB = 18
-STATIC_NOISE_PATH = config.STATIC_NOISE_PATH
-RAIN_NOISE_PATH = config.RAIN_NOISE_PATH
-LAT = config.LATITUDE
-LON = config.LONGITUDE
+# Filename pattern: SPOTNAME_YYYYMMDD_HHMMSS.wav
+_FILENAME_RE = re.compile(
+    r"^(?P<spot>[A-Za-z][A-Za-z0-9_-]*)_"
+    r"(?P<year>\d{4})(?P<month>\d{2})(?P<day>\d{2})_"
+    r"(?P<hour>\d{2})(?P<minute>\d{2})(?P<second>\d{2})\.wav$",
+    re.IGNORECASE,
+)
+
 
 # =============================================================================
-# DENOISING FUNCTIONS (from BirdNet_Predictions.ipynb Cell 7 — exact copy)
+# PART 1 — FILE LISTING
 # =============================================================================
-def remove_static_noise(audio, noise_ref, sr=TARGET_SR, snr_db=SNR_DB):
+def parse_filename(filename: str) -> dict | None:
+    m = _FILENAME_RE.match(filename)
+    if not m:
+        return None
+    month, day = int(m.group("month")), int(m.group("day"))
+    hour, minute, second = int(m.group("hour")), int(m.group("minute")), int(m.group("second"))
+    if not (1 <= month <= 12 and 1 <= day <= 31):
+        return None
+    if not (0 <= hour <= 23 and 0 <= minute <= 59 and 0 <= second <= 59):
+        return None
+    try:
+        file_date = date(int(m.group("year")), month, day)
+    except ValueError:
+        return None
+    return {"spot": m.group("spot"), "date": file_date, "hour": hour, "filename": filename}
+
+
+def list_files(
+    input_directories: list[str],
+    date_start: date,
+    date_end: date,
+    processed_files: set[str],
+    input_file_list: list[str] | None = None,
+) -> list[str]:
+    discovered: dict[str, str] = {}
+
+    for directory in input_directories:
+        directory = os.path.abspath(directory)
+        if not os.path.isdir(directory):
+            print(f"WARNING: input directory not found: {directory}")
+            continue
+        for root, _dirs, files in os.walk(directory):
+            for fname in files:
+                parsed = parse_filename(fname)
+                if parsed is None:
+                    continue
+                if not (date_start <= parsed["date"] <= date_end):
+                    continue
+                if fname not in discovered:
+                    discovered[fname] = os.path.join(root, fname)
+
+    if input_file_list:
+        for fpath in input_file_list:
+            fpath = os.path.abspath(fpath)
+            fname = os.path.basename(fpath)
+            if fname not in discovered and os.path.isfile(fpath):
+                discovered[fname] = fpath
+
+    for pf in processed_files:
+        discovered.pop(pf, None)
+
+    result = sorted(discovered.values())
+    print(f"File listing: {len(result)} to process ({len(processed_files)} already processed)")
+    return result
+
+
+# =============================================================================
+# PART 2 — MAIN PIPELINE
+# =============================================================================
+def _denoise(audio: np.ndarray, noise_ref: np.ndarray,
+             sr: int = config.TARGET_SR, snr_db: float = config.SNR_DB) -> np.ndarray:
     if len(noise_ref) > len(audio):
         noise_ref = noise_ref[:len(audio)]
     else:
-        noise_ref = np.pad(noise_ref, (0, len(audio) - len(noise_ref)), 'wrap')
+        noise_ref = np.pad(noise_ref, (0, len(audio) - len(noise_ref)), "wrap")
+
     audio_power = np.mean(audio ** 2)
     noise_power = np.mean(noise_ref ** 2)
+    if noise_power == 0:
+        return audio
     desired_noise_power = audio_power / (10 ** (snr_db / 10))
     noise_ref_scaled = noise_ref * np.sqrt(desired_noise_power / noise_power)
+
     audio_td = audio - noise_ref_scaled
-    stft = librosa.stft(audio_td, n_fft=2048, hop_length=512)
+    n_fft, hop = 2048, 512
+    stft = librosa.stft(audio_td, n_fft=n_fft, hop_length=hop)
     magnitude, phase = np.abs(stft), np.angle(stft)
-    noise_stft = librosa.stft(noise_ref, n_fft=2048, hop_length=512)
-    noise_mag = np.abs(noise_stft)
-    noise_threshold = np.mean(noise_mag, axis=1, keepdims=True) * 1.2
+
+    noise_stft = librosa.stft(noise_ref, n_fft=n_fft, hop_length=hop)
+    noise_threshold = np.mean(np.abs(noise_stft), axis=1, keepdims=True) * 1.2
     gated_mag = np.where(magnitude > noise_threshold, magnitude, 0)
-    cleaned_stft = gated_mag * np.exp(1j * phase)
-    return librosa.istft(cleaned_stft, hop_length=512)
+    return librosa.istft(gated_mag * np.exp(1j * phase), hop_length=hop)
 
 
-def remove_rain_noise(audio, noise_ref, sr=TARGET_SR, snr_db=SNR_DB):
-    if len(noise_ref) > len(audio):
-        noise_ref = noise_ref[:len(audio)]
-    else:
-        noise_ref = np.pad(noise_ref, (0, len(audio) - len(noise_ref)), 'wrap')
-    audio_power = np.mean(audio ** 2)
-    noise_power = np.mean(noise_ref ** 2)
-    desired_noise_power = audio_power / (10 ** (snr_db / 10))
-    noise_ref_scaled = noise_ref * np.sqrt(desired_noise_power / noise_power)
-    audio_td = audio - noise_ref_scaled
-    stft = librosa.stft(audio_td, n_fft=2048, hop_length=512)
-    magnitude, phase = np.abs(stft), np.angle(stft)
-    noise_stft = librosa.stft(noise_ref, n_fft=2048, hop_length=512)
-    noise_mag = np.abs(noise_stft)
-    noise_threshold = np.mean(noise_mag, axis=1, keepdims=True) * 1.2
-    gated_mag = np.where(magnitude > noise_threshold, magnitude, 0)
-    cleaned_stft = gated_mag * np.exp(1j * phase)
-    audio_cleaned = librosa.istft(cleaned_stft, hop_length=512)
-    return audio_cleaned
+def _analyze_file(filepath, analyzer, noise_clip, rain_clip):
+    audio_raw, orig_sr = sf.read(filepath, dtype="float32")
+    if audio_raw.ndim > 1:
+        audio_raw = audio_raw.mean(axis=1)
+    if orig_sr != config.TARGET_SR:
+        audio_raw = librosa.resample(y=audio_raw, orig_sr=orig_sr, target_sr=config.TARGET_SR)
 
+    audio_clean = _denoise(audio_raw, noise_clip)
+    audio_clean = _denoise(audio_clean, rain_clip)
 
-# =============================================================================
-# BirdNET ANALYSIS FUNCTION (from BirdNet_Predictions.ipynb Cell 7)
-# =============================================================================
-def analyze_bird_audio(audio_path, lat, lon, noise_clip, rain_noise_clip, analyzer=None):
-    """Load audio, denoise (static + rain), run BirdNET, return detections DataFrame.
-
-    Parameters
-    ----------
-    analyzer : birdnetlib.analyzer.Analyzer, optional
-        Pre-loaded BirdNET analyzer instance.  When supplied the heavy
-        model-load step (~60 s) is skipped.  **Always pass a shared
-        instance from the calling loop.**
-
-    Optimizations vs notebook code:
-      - Uses RecordingBuffer to pass denoised audio as numpy array directly,
-        avoiding the temp-file write + redundant librosa.load() round-trip
-        that doubled I/O time for every file.
-    """
-    audio_raw, orig_sr = librosa.load(audio_path, sr=None)
-    if orig_sr != TARGET_SR:
-        audio_raw = librosa.resample(y=audio_raw, orig_sr=orig_sr, target_sr=TARGET_SR)
-
-    final_sound_temp = remove_static_noise(audio_raw, noise_clip, sr=TARGET_SR, snr_db=SNR_DB)
-    final_sound = remove_rain_noise(final_sound_temp, rain_noise_clip, sr=TARGET_SR, snr_db=SNR_DB)
-
-    # Use RecordingBuffer to pass the denoised numpy array directly to BirdNET.
-    # This skips: temp-file write (sf.write) → temp-file read (librosa.load inside Recording).
-    if analyzer is None:
-        analyzer = Analyzer()
     recording = RecordingBuffer(
-        analyzer,
-        final_sound,
-        TARGET_SR,
-        lat=lat,
-        lon=lon,
+        analyzer, audio_clean, config.TARGET_SR,
+        lat=config.LATITUDE, lon=config.LONGITUDE, min_conf=config.MIN_CONFIDENCE,
     )
-    # Suppress birdnetlib's per-chunk/per-species verbose prints
-    import io, contextlib
     with contextlib.redirect_stdout(io.StringIO()):
         recording.analyze()
     return pd.DataFrame(recording.detections)
 
 
-def _process_single_file(args):
-    """Worker function for parallel processing. Each worker loads its own Analyzer
-    (unavoidable — TFLite interpreters aren't picklable across processes) but
-    processes many files with it."""
-    filepath, filename, lat, lon, noise_clip, rain_noise_clip, hour = args
-    try:
-        # Each worker gets a thread-local analyzer (loaded once per worker via initializer)
-        analyzer = _get_worker_analyzer()
-        detections_df = analyze_bird_audio(filepath, lat, lon, noise_clip, rain_noise_clip, analyzer=analyzer)
-        if not detections_df.empty:
-            detections_df['filename'] = filename
-            detections_df['hour'] = hour
-            return detections_df
-    except Exception as e:
-        print(f"\n  ERROR processing {filename}: {e}")
-    return None
-
-
-# --- Worker-local Analyzer (one per process, reused across files) ---
 _worker_analyzer = None
+_worker_noise = None
+_worker_rain = None
 
-def _init_worker(num_threads):
-    """Called once per worker process to create a long-lived Analyzer."""
-    global _worker_analyzer
-    # Suppress all TF warnings + birdnetlib prints in workers
-    import io, contextlib, warnings
-    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-    os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
-    warnings.filterwarnings('ignore', message='.*tf.lite.Interpreter is deprecated.*')
+
+def _init_worker(noise_path, rain_path, tflite_threads):
+    global _worker_analyzer, _worker_noise, _worker_rain
 
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         _worker_analyzer = Analyzer()
-    # Increase TFLite threads for this worker
-    if num_threads > 1:
+
+    if tflite_threads > 1:
         try:
+            interp = _worker_analyzer.interpreter
             with contextlib.redirect_stderr(io.StringIO()):
-                _worker_analyzer.interpreter = type(_worker_analyzer.interpreter)(
-                    model_path=_worker_analyzer.model_path, num_threads=num_threads
-                )
-            _worker_analyzer.interpreter.allocate_tensors()
-            _worker_analyzer.input_details = _worker_analyzer.interpreter.get_input_details()
-            _worker_analyzer.output_details = _worker_analyzer.interpreter.get_output_details()
+                new_interp = type(interp)(model_path=_worker_analyzer.model_path, num_threads=tflite_threads)
+            new_interp.allocate_tensors()
+            _worker_analyzer.interpreter = new_interp
+            _worker_analyzer.input_details = new_interp.get_input_details()
+            _worker_analyzer.output_details = new_interp.get_output_details()
             _worker_analyzer.input_layer_index = _worker_analyzer.input_details[0]["index"]
             _worker_analyzer.output_layer_index = _worker_analyzer.output_details[0]["index"]
         except Exception:
-            pass  # Fall back to default 1-thread if re-init fails
+            pass
 
-def _get_worker_analyzer():
-    """Return the process-local Analyzer."""
-    return _worker_analyzer
+    _worker_noise, _ = sf.read(noise_path, dtype="float32")
+    _worker_rain, _ = sf.read(rain_path, dtype="float32")
+    if _worker_noise.ndim > 1:
+        _worker_noise = _worker_noise.mean(axis=1)
+    if _worker_rain.ndim > 1:
+        _worker_rain = _worker_rain.mean(axis=1)
+
+    noise_sr = sf.info(noise_path).samplerate
+    rain_sr = sf.info(rain_path).samplerate
+    if noise_sr != config.TARGET_SR:
+        _worker_noise = librosa.resample(y=_worker_noise, orig_sr=noise_sr, target_sr=config.TARGET_SR)
+    if rain_sr != config.TARGET_SR:
+        _worker_rain = librosa.resample(y=_worker_rain, orig_sr=rain_sr, target_sr=config.TARGET_SR)
 
 
-# =============================================================================
-# MAIN PROCESSING LOOP
-# (Batch pattern from calculate_indices.ipynb Cell 8, calling analyze_bird_audio
-#  from BirdNet_Predictions.ipynb Cell 7)
-# =============================================================================
-def _run_watcher_mode():
-    """Entry point when launched by the watcher with CLI args.
+def _process_single_file(filepath):
+    filename = os.path.basename(filepath)
+    parsed = parse_filename(filename)
+    hour = parsed["hour"] if parsed else None
+    try:
+        df = _analyze_file(filepath, _worker_analyzer, _worker_noise, _worker_rain)
+        if not df.empty:
+            df["filename"] = filename
+            df["filepath"] = filepath
+            df["hour"] = hour
+            df["spot"] = parsed["spot"] if parsed else ""
+            if "common_name" in df.columns and "label" not in df.columns:
+                df["label"] = df["common_name"]
+            return filename, df
+        return filename, None
+    except Exception as e:
+        print(f"\n  ERROR processing {filename}: {e}")
+        return filename, None
 
-    Aggregate-aware flow:
-      1. Load existing aggregate CSV → extract already-processed filenames
-      2. Diff against WAV files in datasets → only process NEW files
-      3. Append new detections to aggregate CSV
-      4. Mark files with no detections in aggregate (so they're never re-scanned)
-      5. Output date-range-filtered subset to job output dir
-    """
-    import multiprocessing
 
-    args = config.parse_common_args("BirdNET species classification from raw audio")
-    output_dir = args.output_dir
-    os.makedirs(output_dir, exist_ok=True)
+def load_processed_files(path: str) -> set[str]:
+    if not os.path.isfile(path):
+        return set()
+    with open(path, "r") as f:
+        return {line.strip() for line in f if line.strip()}
 
-    # --- Resolve aggregate file path ---
-    aggregate_path = config.resolve_aggregate_path(args, "birdnet_results.csv")
-    print(f"Aggregate file: {aggregate_path}")
 
-    # Load existing aggregate to know what's already processed
-    existing_aggregate = config.load_aggregate(aggregate_path)
-    already_processed = config.get_processed_filenames(existing_aggregate)
-    print(f"Aggregate contains {len(already_processed)} already-processed files")
+def save_processed_files(path: str, filenames: set[str]):
+    with open(path, "w") as f:
+        for fname in sorted(filenames):
+            f.write(fname + "\n")
 
-    # --- Resolve noise files ---
-    noise_path = config.resolve_noise_path(args)
-    if not noise_path:
-        print("ERROR: No static_noise.wav found. Cannot denoise.")
-        sys.exit(1)
 
-    rain_noise_path = RAIN_NOISE_PATH
-    if args.noise_path:
-        rain_candidate = os.path.join(os.path.dirname(args.noise_path), "rain_noise.wav")
-        if os.path.exists(rain_candidate):
-            rain_noise_path = rain_candidate
+def run_pipeline(file_list, aggregate_path, processed_files_path):
+    if not file_list:
+        print("No new files to process.")
+        return pd.DataFrame()
 
-    print("Loading noise reference clips...")
-    noise_clip, _ = librosa.load(noise_path, sr=TARGET_SR)
-    rain_noise_clip, _ = librosa.load(rain_noise_path, sr=TARGET_SR)
-
-    # --- Parallelism ---
     total_cpus = multiprocessing.cpu_count()
-    N_WORKERS = max(1, min(total_cpus // 2, 4))
-    THREADS_PER_WORKER = max(1, total_cpus // N_WORKERS)
-    print(f"Parallelism: {N_WORKERS} workers × {THREADS_PER_WORKER} TFLite threads "
-          f"(detected {total_cpus} logical CPUs)")
+    n_workers = max(1, min(total_cpus // 2, 4))
+    threads_per = max(1, total_cpus // n_workers)
+    print(f"Parallelism: {n_workers} workers × {threads_per} TFLite threads ({total_cpus} CPUs)")
 
     all_detections = []
-    files_with_detections = set()
-    all_attempted_files = []
+    processed_this_run = set()
+    already_processed = load_processed_files(processed_files_path)
 
-    for dataset_dir in args.datasets:
-        if not os.path.isdir(dataset_dir):
-            print(f"WARNING: Dataset dir not found: {dataset_dir}")
-            continue
+    with ProcessPoolExecutor(
+        max_workers=n_workers,
+        initializer=_init_worker,
+        initargs=(config.STATIC_NOISE_PATH, config.RAIN_NOISE_PATH, threads_per),
+    ) as executor:
+        futures = {executor.submit(_process_single_file, fp): fp for fp in file_list}
+        with tqdm(total=len(file_list), desc="BirdNET") as pbar:
+            for future in as_completed(futures):
+                filename, result = future.result()
+                processed_this_run.add(filename)
+                if result is not None:
+                    all_detections.append(result)
+                pbar.update(1)
 
-        wav_files = sorted([f for f in os.listdir(dataset_dir) if f.lower().endswith('.wav')])
-        print(f"\n{'='*60}")
-        print(f"Processing: {dataset_dir} ({len(wav_files)} WAV files)")
-
-        # Build task list — skip files already in aggregate
-        tasks = []
-        for filename in wav_files:
-            if filename in already_processed:
-                continue
-            filepath = os.path.join(dataset_dir, filename)
-            hour = config.extract_hour_from_filename(filename)
-            tasks.append((filepath, filename, args.lat, args.lon,
-                          noise_clip, rain_noise_clip, hour))
-
-        if not tasks:
-            print("  All files already in aggregate (skipped)")
-            continue
-
-        print(f"  Processing {len(tasks)} NEW files (skipped {len(wav_files) - len(tasks)} cached)")
-
-        with ProcessPoolExecutor(
-            max_workers=N_WORKERS,
-            initializer=_init_worker,
-            initargs=(THREADS_PER_WORKER,),
-        ) as executor:
-            futures = {executor.submit(_process_single_file, t): t[1] for t in tasks}
-            with tqdm(total=len(tasks), desc=f"  BirdNET") as pbar:
-                for future in as_completed(futures):
-                    fname = futures[future]
-                    result = future.result()
-                    if result is not None:
-                        all_detections.append(result)
-                        files_with_detections.add(fname)
-                    pbar.update(1)
-
-        all_attempted_files.extend([t[1] for t in tasks])
-
-    # --- Update aggregate ---
+    new_df = pd.DataFrame()
     if all_detections:
-        new_results_df = pd.concat(all_detections, ignore_index=True)
-        if 'common_name' in new_results_df.columns and 'label' not in new_results_df.columns:
-            new_results_df['label'] = new_results_df['common_name']
-        config.append_to_aggregate(new_results_df, aggregate_path)
-        print(f"\nAppended {len(new_results_df)} new detections to aggregate")
+        new_df = pd.concat(all_detections, ignore_index=True)
+        header = not os.path.isfile(aggregate_path)
+        new_df.to_csv(aggregate_path, mode="a", header=header, index=False)
+        print(f"Appended {len(new_df)} detections to {aggregate_path}")
+    else:
+        print("No detections in this batch.")
 
-    # Mark files with NO detections so they're never re-scanned
-    empty_files = [f for f in all_attempted_files if f not in files_with_detections]
-    if empty_files:
-        config.mark_empty_files(empty_files, aggregate_path)
-        print(f"Marked {len(empty_files)} files as empty (no detections)")
+    already_processed.update(processed_this_run)
+    save_processed_files(processed_files_path, already_processed)
+    print(f"Marked {len(processed_this_run)} files as processed (total: {len(already_processed)})")
+    return new_df
 
-    # --- Output filtered subset for this job ---
-    full_aggregate = config.load_aggregate(aggregate_path)
-    filtered = config.filter_aggregate_for_output(
-        full_aggregate,
-        start_date=args.start_date,
-        end_date=args.end_date,
-        spots=args.spots,
+
+# =============================================================================
+# PART 3 — OUTPUT CSV
+# =============================================================================
+def write_output_csv(aggregate_path, output_path, input_directories, date_start, date_end):
+    if not os.path.isfile(aggregate_path):
+        print("No aggregate file found.")
+        return
+
+    df = pd.read_csv(aggregate_path)
+    if df.empty:
+        print("Aggregate file is empty.")
+        return
+
+    if "filepath" in df.columns:
+        abs_dirs = [os.path.abspath(d) for d in input_directories]
+        df = df[df["filepath"].apply(
+            lambda fp: not pd.isna(fp) and any(os.path.abspath(str(fp)).startswith(d + os.sep) for d in abs_dirs)
+        )]
+
+    if "filename" in df.columns:
+        df = df[df["filename"].apply(lambda fn: (p := parse_filename(str(fn))) is not None and date_start <= p["date"] <= date_end)]
+
+    if df.empty:
+        print("No detections match requested directories + date range.")
+        return
+
+    df.to_csv(output_path, index=False)
+    print(f"Output: {len(df)} detections → {output_path}")
+
+
+# =============================================================================
+# MAIN
+# =============================================================================
+def main():
+    processed_set = load_processed_files(config.PROCESSED_FILE)
+    files_to_process = list_files(
+        input_directories=config.INPUT_DIRECTORIES,
+        date_start=config.DATE_START,
+        date_end=config.DATE_END,
+        processed_files=processed_set,
+        input_file_list=config.INPUT_FILE_LIST,
     )
 
-    if not filtered.empty:
-        output_csv = os.path.join(output_dir, "birdnet_results.csv")
-        filtered.to_csv(output_csv, index=False)
-        print(f"Output {len(filtered)} detections for requested range to: {output_csv}")
-    else:
-        print("WARNING: No detections in requested date range / spots.")
+    run_pipeline(
+        file_list=files_to_process,
+        aggregate_path=config.AGGREGATE_FILE,
+        processed_files_path=config.PROCESSED_FILE,
+    )
 
-    # Legacy: still write processed.json for backward compat with old watchers
-    config.save_processed_list(output_dir, all_attempted_files)
-    print(f"Processed {len(all_attempted_files)} new files this run.")
+    write_output_csv(
+        aggregate_path=config.AGGREGATE_FILE,
+        output_path=config.OUTPUT_CSV,
+        input_directories=config.INPUT_DIRECTORIES,
+        date_start=config.DATE_START,
+        date_end=config.DATE_END,
+    )
 
 
 if __name__ == "__main__":
-    _run_watcher_mode()
+    main()

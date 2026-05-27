@@ -531,3 +531,84 @@ def load_filtered_detections(args):
         )
 
     print(f"Final
+ filtered detections: {len(filtered)} detections, {filtered['common_name'].nunique()} species")
+    return filtered
+
+
+# =============================================================================
+# V2 BACKWARD COMPATIBILITY — old-style constants & filter wrapper
+# =============================================================================
+# These mirror the original v2 config.py so existing scripts work unchanged.
+# For new webapp pipeline usage, prefer parse_common_args() + CLI args.
+
+from datetime import date as _date
+
+# --- INPUTS (change per run) ---
+SPOT_NAMES: list = []
+DATE_START  = _date(2025, 11, 1)
+DATE_END    = _date(2025, 12, 31)
+INPUT_FILE_LIST: list = []
+
+# --- PATHS (set once for your environment) ---
+INPUT_DIRECTORIES: list = [
+    r"path/to/audio_dir_1",
+    r"path/to/audio_dir_2",
+]
+
+AGGREGATE_FILE     = r"path/to/birdnet_aggregate.csv"
+PROCESSED_FILE     = r"path/to/processed_files.txt"
+OUTPUT_CSV         = r"path/to/birdnet_output.csv"
+
+EBIRD_FILE         = EBIRD_SPECIES_FILE  # alias to new name
+
+OUTPUT_DIR_02_HEATMAPS   = r"path/to/output/02_heatmaps"
+OUTPUT_DIR_03_TEMPORAL    = r"path/to/output/03_temporal_stickiness"
+OUTPUT_DIR_04_SPATIAL     = r"path/to/output/04_spatial_stickiness"
+OUTPUT_DIR_07_MIGRATORY   = r"path/to/output/07_migratory"
+OUTPUT_DIR_08_SOLAR       = r"path/to/output/08_solar"
+OUTPUT_DIR_09_TIMESERIES  = r"path/to/output/09_timeseries"
+
+# --- CONSTANTS ---
+SNR_DB              = 18.0
+LOCATION_NAME       = "Sanjay Van"
+MIN_CONFIDENCE      = 0.25
+TOP_N_SPECIES       = 25
+TOP_N_TEMPORAL      = 80
+SCI_THRESHOLD       = 0.9
+KURTOSIS_THRESHOLD  = 15.0
+PMR_THRESHOLD       = 50.0
+WINDOW_SIZE         = 60
+EPSILON             = 1e-6
+MIN_SOLAR_DAYS      = 5
+MAX_TIMESERIES_SP   = 50
+SPECIES_TO_PLOT     = None
+
+
+# --- Old-style filter_detections wrapper (path-based) ---
+_original_filter_detections = filter_detections
+
+def _legacy_filter_detections(aggregate_path, ebird_file=None,
+                              date_start=None, date_end=None,
+                              spot_names=None):
+    """Backward-compatible wrapper: accepts CSV path, returns filtered DataFrame."""
+    df = pd.read_csv(aggregate_path)
+    print(f"Loaded aggregate: {len(df)} rows")
+    filtered = _original_filter_detections(df, ebird_file=ebird_file)
+
+    # Date range filter
+    if "Date_Only" in filtered.columns:
+        if date_start is not None:
+            filtered = filtered[filtered["Date_Only"] >= date_start]
+        if date_end is not None:
+            filtered = filtered[filtered["Date_Only"] <= date_end]
+
+    # Spot filter
+    if spot_names:
+        filtered = filtered[filtered["Spot"].isin([s.lower() for s in spot_names])]
+
+    print(f"Final: {len(filtered)} detections, {filtered['common_name'].nunique()} species")
+    return filtered
+
+# Override with legacy wrapper so v2 scripts work unchanged
+filter_detections = _legacy_filter_detections
+

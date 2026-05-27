@@ -1,12 +1,9 @@
 [
   "birdnet-inference",
-  "acoustic-indices",
   "activity-heatmaps",
   "temporal-stickiness",
   "spatial-stickiness",
-  "ndsi-boxplots",
   "migratory-classification",
   "solar-correlation",
-  "daily-timeseries",
-  "indices-diversity-correlation"
+  "daily-timeseries"
 ]
