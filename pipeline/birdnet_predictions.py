@@ -30,8 +30,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning, module="tensorflo
 from birdnetlib.main import RecordingBuffer
 from birdnetlib.analyzer import Analyzer
 
-from importlib import import_module
-config = import_module("00_config")
+import config as cfg
 
 # Filename pattern: SPOTNAME_YYYYMMDD_HHMMSS.wav
 _FILENAME_RE = re.compile(
@@ -105,7 +104,10 @@ def list_files(
 # PART 2 — MAIN PIPELINE
 # =============================================================================
 def _denoise(audio: np.ndarray, noise_ref: np.ndarray,
-             sr: int = config.TARGET_SR, snr_db: float = config.SNR_DB) -> np.ndarray:
+             sr: int | None = None, snr_db: float | None = None) -> np.ndarray:
+    # Read from config at call-time so CLI overrides (e.g. --snr-db) take effect.
+    sr = cfg.TARGET_SR if sr is None else sr
+    snr_db = cfg.SNR_DB if snr_db is None else snr_db
     if len(noise_ref) > len(audio):
         noise_ref = noise_ref[:len(audio)]
     else:
@@ -133,15 +135,15 @@ def _analyze_file(filepath, analyzer, noise_clip, rain_clip):
     audio_raw, orig_sr = sf.read(filepath, dtype="float32")
     if audio_raw.ndim > 1:
         audio_raw = audio_raw.mean(axis=1)
-    if orig_sr != config.TARGET_SR:
-        audio_raw = librosa.resample(y=audio_raw, orig_sr=orig_sr, target_sr=config.TARGET_SR)
+    if orig_sr != cfg.TARGET_SR:
+        audio_raw = librosa.resample(y=audio_raw, orig_sr=orig_sr, target_sr=cfg.TARGET_SR)
 
     audio_clean = _denoise(audio_raw, noise_clip)
     audio_clean = _denoise(audio_clean, rain_clip)
 
     recording = RecordingBuffer(
-        analyzer, audio_clean, config.TARGET_SR,
-        lat=config.LATITUDE, lon=config.LONGITUDE, min_conf=config.MIN_CONFIDENCE,
+        analyzer, audio_clean, cfg.TARGET_SR,
+        lat=cfg.LATITUDE, lon=cfg.LONGITUDE, min_conf=cfg.MIN_CONFIDENCE,
     )
     with contextlib.redirect_stdout(io.StringIO()):
         recording.analyze()
@@ -182,10 +184,10 @@ def _init_worker(noise_path, rain_path, tflite_threads):
 
     noise_sr = sf.info(noise_path).samplerate
     rain_sr = sf.info(rain_path).samplerate
-    if noise_sr != config.TARGET_SR:
-        _worker_noise = librosa.resample(y=_worker_noise, orig_sr=noise_sr, target_sr=config.TARGET_SR)
-    if rain_sr != config.TARGET_SR:
-        _worker_rain = librosa.resample(y=_worker_rain, orig_sr=rain_sr, target_sr=config.TARGET_SR)
+    if noise_sr != cfg.TARGET_SR:
+        _worker_noise = librosa.resample(y=_worker_noise, orig_sr=noise_sr, target_sr=cfg.TARGET_SR)
+    if rain_sr != cfg.TARGET_SR:
+        _worker_rain = librosa.resample(y=_worker_rain, orig_sr=rain_sr, target_sr=cfg.TARGET_SR)
 
 
 def _process_single_file(filepath):
@@ -238,7 +240,7 @@ def run_pipeline(file_list, aggregate_path, processed_files_path):
     with ProcessPoolExecutor(
         max_workers=n_workers,
         initializer=_init_worker,
-        initargs=(config.STATIC_NOISE_PATH, config.RAIN_NOISE_PATH, threads_per),
+        initargs=(cfg.STATIC_NOISE_PATH, cfg.RAIN_NOISE_PATH, threads_per),
     ) as executor:
         futures = {executor.submit(_process_single_file, fp): fp for fp in file_list}
         with tqdm(total=len(file_list), desc="BirdNET") as pbar:
@@ -298,27 +300,28 @@ def write_output_csv(aggregate_path, output_path, input_directories, date_start,
 # MAIN
 # =============================================================================
 def main():
-    processed_set = load_processed_files(config.PROCESSED_FILE)
+    cfg.apply_overrides()
+    processed_set = load_processed_files(cfg.PROCESSED_FILE)
     files_to_process = list_files(
-        input_directories=config.INPUT_DIRECTORIES,
-        date_start=config.DATE_START,
-        date_end=config.DATE_END,
+        input_directories=cfg.INPUT_DIRECTORIES,
+        date_start=cfg.DATE_START,
+        date_end=cfg.DATE_END,
         processed_files=processed_set,
-        input_file_list=config.INPUT_FILE_LIST,
+        input_file_list=cfg.INPUT_FILE_LIST,
     )
 
     run_pipeline(
         file_list=files_to_process,
-        aggregate_path=config.AGGREGATE_FILE,
-        processed_files_path=config.PROCESSED_FILE,
+        aggregate_path=cfg.AGGREGATE_FILE,
+        processed_files_path=cfg.PROCESSED_FILE,
     )
 
     write_output_csv(
-        aggregate_path=config.AGGREGATE_FILE,
-        output_path=config.OUTPUT_CSV,
-        input_directories=config.INPUT_DIRECTORIES,
-        date_start=config.DATE_START,
-        date_end=config.DATE_END,
+        aggregate_path=cfg.AGGREGATE_FILE,
+        output_path=cfg.OUTPUT_CSV,
+        input_directories=cfg.INPUT_DIRECTORIES,
+        date_start=cfg.DATE_START,
+        date_end=cfg.DATE_END,
     )
 
 

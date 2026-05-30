@@ -11,14 +11,14 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import os
 
-from importlib import import_module
-config = import_module("00_config")
+import config as cfg
+from filter_utils import filter_detections
 
 
 # =============================================================================
 # ANALYSIS
 # =============================================================================
-def run_timeseries(df, output_dir, species_to_plot=config.SPECIES_TO_PLOT, max_species=config.MAX_TIMESERIES_SP):
+def run_timeseries(df, output_dir, species_to_plot=cfg.SPECIES_TO_PLOT, max_species=cfg.MAX_TIMESERIES_SP):
     os.makedirs(output_dir, exist_ok=True)
     sns.set_style("whitegrid")
 
@@ -87,14 +87,15 @@ def run_timeseries(df, output_dir, species_to_plot=config.SPECIES_TO_PLOT, max_s
 # MAIN
 # =============================================================================
 def main():
-    df = config.filter_detections(
-        config.AGGREGATE_FILE, config.EBIRD_FILE,
-        config.DATE_START, config.DATE_END, config.SPOT_NAMES,
+    cfg.apply_overrides()
+    df = filter_detections(
+        cfg.AGGREGATE_FILE, cfg.EBIRD_FILE,
+        cfg.DATE_START, cfg.DATE_END, cfg.SPOT_NAMES,
     )
     if df.empty:
         print("ERROR: No data after filtering.")
         return
-    run_timeseries(df, config.OUTPUT_DIR_09_TIMESERIES)
+    run_timeseries(df, cfg.OUTPUT_DIR_09_TIMESERIES)
 
 
 if __name__ == "__main__":

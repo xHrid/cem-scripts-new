@@ -1,9 +1,1 @@
-[
-  "birdnet-inference",
-  "activity-heatmaps",
-  "temporal-stickiness",
-  "spatial-stickiness",
-  "migratory-classification",
-  "solar-correlation",
-  "daily-timeseries"
-]
+["pipeline"]

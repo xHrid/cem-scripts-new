@@ -3,8 +3,6 @@ pandas
 librosa
 soundfile
 scipy
-scikit-learn
-joblib
 tqdm
 matplotlib
 seaborn

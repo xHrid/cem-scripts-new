@@ -12,8 +12,8 @@ import seaborn as sns
 from scipy.stats import spearmanr
 import os
 
-from importlib import import_module
-config = import_module("00_config")
+import config as cfg
+from filter_utils import filter_detections
 
 
 # =============================================================================
@@ -111,14 +111,15 @@ def run_analysis(df, output_dir):
 # MAIN
 # =============================================================================
 def main():
-    df = config.filter_detections(
-        config.AGGREGATE_FILE, config.EBIRD_FILE,
-        config.DATE_START, config.DATE_END, config.SPOT_NAMES,
+    cfg.apply_overrides()
+    df = filter_detections(
+        cfg.AGGREGATE_FILE, cfg.EBIRD_FILE,
+        cfg.DATE_START, cfg.DATE_END, cfg.SPOT_NAMES,
     )
     if df.empty:
         print("ERROR: No data after filtering.")
         return
-    run_analysis(df, config.OUTPUT_DIR_04_SPATIAL)
+    run_analysis(df, cfg.OUTPUT_DIR_04_SPATIAL)
 
 
 if __name__ == "__main__":

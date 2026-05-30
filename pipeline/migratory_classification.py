@@ -9,8 +9,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 
-from importlib import import_module
-config = import_module("00_config")
+import config as cfg
+from filter_utils import filter_detections
 
 
 # =============================================================================
@@ -43,8 +43,8 @@ def run_classification(df, output_dir):
             continue
 
         # SCI
-        if len(counts_arr) >= config.WINDOW_SIZE:
-            rs_max = pd.Series(counts_arr).rolling(window=config.WINDOW_SIZE).sum().dropna().max()
+        if len(counts_arr) >= cfg.WINDOW_SIZE:
+            rs_max = pd.Series(counts_arr).rolling(window=cfg.WINDOW_SIZE).sum().dropna().max()
         else:
             rs_max = total
         sci = rs_max / total
@@ -61,9 +61,9 @@ def run_classification(df, output_dir):
             k_value = 0.0
 
         # PMR
-        pmr = counts_arr.max() / (np.median(counts_arr) + config.EPSILON)
+        pmr = counts_arr.max() / (np.median(counts_arr) + cfg.EPSILON)
 
-        is_mig = (sci > config.SCI_THRESHOLD) and (k_value > config.KURTOSIS_THRESHOLD) and (pmr > config.PMR_THRESHOLD)
+        is_mig = (sci > cfg.SCI_THRESHOLD) and (k_value > cfg.KURTOSIS_THRESHOLD) and (pmr > cfg.PMR_THRESHOLD)
         results.append({
             "Species": bird, "SCI": round(sci, 4), "Kurtosis": round(k_value, 2),
             "PMR": round(pmr, 2), "Total_Detections": int(total),
@@ -84,7 +84,7 @@ def run_classification(df, output_dir):
 
     for ax, col, thresh, label in zip(
         axes, ["SCI", "Kurtosis", "PMR"],
-        [config.SCI_THRESHOLD, config.KURTOSIS_THRESHOLD, config.PMR_THRESHOLD],
+        [cfg.SCI_THRESHOLD, cfg.KURTOSIS_THRESHOLD, cfg.PMR_THRESHOLD],
         ["SCI", "Residual Kurtosis (K)", "PMR"],
     ):
         for cls in ["Resident", "Migratory"]:
@@ -105,8 +105,8 @@ def run_classification(df, output_dir):
     for cls in ["Resident", "Migratory"]:
         subset = metrics_df[metrics_df["Classification"] == cls]
         ax.scatter(subset["SCI"], subset["PMR"].clip(upper=300), alpha=0.6, label=cls, color=colors[cls], s=40)
-    ax.axvline(config.SCI_THRESHOLD, color="gray", linestyle="--", alpha=0.5)
-    ax.axhline(config.PMR_THRESHOLD, color="gray", linestyle="--", alpha=0.5)
+    ax.axvline(cfg.SCI_THRESHOLD, color="gray", linestyle="--", alpha=0.5)
+    ax.axhline(cfg.PMR_THRESHOLD, color="gray", linestyle="--", alpha=0.5)
     ax.set_xlabel("SCI")
     ax.set_ylabel("PMR")
     ax.set_title("SCI vs PMR")
@@ -122,14 +122,15 @@ def run_classification(df, output_dir):
 # MAIN
 # =============================================================================
 def main():
-    df = config.filter_detections(
-        config.AGGREGATE_FILE, config.EBIRD_FILE,
-        config.DATE_START, config.DATE_END, config.SPOT_NAMES,
+    cfg.apply_overrides()
+    df = filter_detections(
+        cfg.AGGREGATE_FILE, cfg.EBIRD_FILE,
+        cfg.DATE_START, cfg.DATE_END, cfg.SPOT_NAMES,
     )
     if df.empty:
         print("ERROR: No data after filtering.")
         return
-    run_classification(df, config.OUTPUT_DIR_07_MIGRATORY)
+    run_classification(df, cfg.OUTPUT_DIR_07_MIGRATORY)
 
 
 if __name__ == "__main__":

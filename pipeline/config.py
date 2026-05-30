@@ -1,0 +1,139 @@
+"""
+Central configuration for the BirdNET pipeline.
+
+CONSTANTS  — paths, thresholds, coordinates. Edit once, used everywhere.
+INPUTS     — spot_names, date_range, input_file_list. Change per run.
+
+The watcher overrides the INPUTS/PATHS at launch via apply_overrides();
+standalone runs just use the defaults below.
+"""
+
+import os
+from datetime import date, datetime
+
+# =============================================================================
+# INPUTS — change these per run
+# =============================================================================
+SPOT_NAMES: list[str] = []          # empty = all spots; or ["crimespot3", "crimespot5"]
+DATE_START: date = date(2025, 11, 1)
+DATE_END:   date = date(2025, 12, 31)
+INPUT_FILE_LIST: list[str] = []     # explicit WAV paths to always include (birdnet only)
+
+# =============================================================================
+# PATHS — set once for your environment
+# =============================================================================
+# Audio input directories (birdnet scans these recursively)
+INPUT_DIRECTORIES: list[str] = [
+    r"path/to/audio_dir_1",
+    r"path/to/audio_dir_2",
+]
+
+# BirdNET pipeline files
+AGGREGATE_FILE:     str = r"path/to/birdnet_aggregate.csv"
+PROCESSED_FILE:     str = r"path/to/processed_files.txt"
+OUTPUT_CSV:         str = r"path/to/birdnet_output.csv"
+
+# Denoising reference clips
+STATIC_NOISE_PATH:  str = r"path/to/static_noise.wav"
+RAIN_NOISE_PATH:    str = r"path/to/rain_noise.wav"
+
+# eBird species checklist (taxonomic filter)
+EBIRD_FILE:         str = r"path/to/ebird_checklist.txt"
+
+# Analysis output directories
+OUTPUT_DIR_02_HEATMAPS:     str = r"path/to/output/02_heatmaps"
+OUTPUT_DIR_03_TEMPORAL:     str = r"path/to/output/03_temporal_stickiness"
+OUTPUT_DIR_04_SPATIAL:      str = r"path/to/output/04_spatial_stickiness"
+OUTPUT_DIR_07_MIGRATORY:    str = r"path/to/output/07_migratory"
+OUTPUT_DIR_08_SOLAR:        str = r"path/to/output/08_solar"
+OUTPUT_DIR_09_TIMESERIES:   str = r"path/to/output/09_timeseries"
+
+# =============================================================================
+# CONSTANTS — rarely change
+# =============================================================================
+# Audio
+TARGET_SR:          int   = 48000
+SNR_DB:             float = 18
+
+# Location (for BirdNET species filtering + solar calculations)
+LATITUDE:           float = 28.5635
+LONGITUDE:          float = 77.1897
+TIMEZONE_STR:       str   = "Asia/Kolkata"
+LOCATION_NAME:      str   = "Sanjay Van"
+
+# BirdNET
+MIN_CONFIDENCE:     float = 0.25
+
+# Analysis thresholds
+TOP_N_SPECIES:      int   = 25     # 02_heatmaps
+TOP_N_TEMPORAL:     int   = 80     # 03_temporal
+SCI_THRESHOLD:      float = 0.9    # 07_migratory
+KURTOSIS_THRESHOLD: float = 15.0   # 07_migratory
+PMR_THRESHOLD:      float = 50.0   # 07_migratory
+WINDOW_SIZE:        int   = 60     # 07_migratory (days)
+EPSILON:            float = 1e-6   # 07_migratory (avoid div/0)
+MIN_SOLAR_DAYS:     int   = 5      # 08_solar (min days with >10 detections)
+MAX_TIMESERIES_SP:  int   = 50     # 09_timeseries
+SPECIES_TO_PLOT:    list[str] | None = None  # 09_timeseries (None = top N)
+
+
+# =============================================================================
+# RUNTIME OVERRIDES
+# =============================================================================
+# The watcher launches scripts with per-job values on the command line. Those
+# override the INPUT/PATH defaults above; everything else stays constant.
+# Standalone runs (no CLI args) just use the defaults — nothing changes.
+#
+# Recognised flags (all optional):
+#   --datasets DIR [DIR ...]     -> INPUT_DIRECTORIES   (dirs scanned recursively)
+#   --input-file-list F [F ...]  -> INPUT_FILE_LIST     (explicit reference files)
+#   --aggregate-file PATH        -> AGGREGATE_FILE
+#   --processed-file PATH        -> PROCESSED_FILE
+#   --output-csv PATH            -> OUTPUT_CSV
+#   --output-dir DIR             -> all OUTPUT_DIR_* (+ default OUTPUT_CSV)
+#   --ebird-file PATH            -> EBIRD_FILE
+#   --noise-path PATH            -> STATIC_NOISE_PATH
+#   --rain-path PATH             -> RAIN_NOISE_PATH
+#   --spots A,B,C                -> SPOT_NAMES
+#   --start-date YYYYMMDD        -> DATE_START
+#   --end-date YYYYMMDD          -> DATE_END
+#   --snr-db FLOAT               -> SNR_DB
+def apply_overrides(argv=None) -> None:
+    import argparse
+
+    p = argparse.ArgumentParser(add_help=False)
+    p.add_argument("--datasets", nargs="*", default=None)
+    p.add_argument("--input-file-list", nargs="*", default=None)
+    p.add_argument("--aggregate-file", default=None)
+    p.add_argument("--processed-file", default=None)
+    p.add_argument("--output-csv", default=None)
+    p.add_argument("--output-dir", default=None)
+    p.add_argument("--ebird-file", default=None)
+    p.add_argument("--noise-path", default=None)
+    p.add_argument("--rain-path", default=None)
+    p.add_argument("--spots", default=None)
+    p.add_argument("--start-date", default=None)
+    p.add_argument("--end-date", default=None)
+    p.add_argument("--snr-db", default=None)
+    args, _unknown = p.parse_known_args(argv)  # ignore watcher extras (--root-dir, ...)
+
+    g = globals()
+    if args.datasets:         g["INPUT_DIRECTORIES"] = list(args.datasets)
+    if args.input_file_list:  g["INPUT_FILE_LIST"] = list(args.input_file_list)
+    if args.aggregate_file:   g["AGGREGATE_FILE"] = args.aggregate_file
+    if args.processed_file:   g["PROCESSED_FILE"] = args.processed_file
+    if args.ebird_file:       g["EBIRD_FILE"] = args.ebird_file
+    if args.noise_path:       g["STATIC_NOISE_PATH"] = args.noise_path
+    if args.rain_path:        g["RAIN_NOISE_PATH"] = args.rain_path
+    if args.spots:            g["SPOT_NAMES"] = [s for s in args.spots.split(",") if s]
+    if args.start_date:       g["DATE_START"] = datetime.strptime(args.start_date, "%Y%m%d").date()
+    if args.end_date:         g["DATE_END"] = datetime.strptime(args.end_date, "%Y%m%d").date()
+    if args.snr_db:           g["SNR_DB"] = float(args.snr_db)
+
+    if args.output_dir:
+        for k in list(g.keys()):
+            if k.startswith("OUTPUT_DIR_"):
+                g[k] = args.output_dir
+        g["OUTPUT_CSV"] = args.output_csv or os.path.join(args.output_dir, "birdnet_output.csv")
+    elif args.output_csv:
+        g["OUTPUT_CSV"] = args.output_csv

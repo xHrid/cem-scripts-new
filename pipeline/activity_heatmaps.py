@@ -10,14 +10,14 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import os
 
-from importlib import import_module
-config = import_module("00_config")
+import config as cfg
+from filter_utils import filter_detections
 
 
 # =============================================================================
 # ANALYSIS
 # =============================================================================
-def run_heatmaps(df, output_dir, top_n=config.TOP_N_SPECIES):
+def run_heatmaps(df, output_dir, top_n=cfg.TOP_N_SPECIES):
     os.makedirs(output_dir, exist_ok=True)
 
     df = df[~df["label"].str.contains("Engine|Siren", na=False)]
@@ -69,14 +69,15 @@ def run_heatmaps(df, output_dir, top_n=config.TOP_N_SPECIES):
 # MAIN
 # =============================================================================
 def main():
-    df = config.filter_detections(
-        config.AGGREGATE_FILE, config.EBIRD_FILE,
-        config.DATE_START, config.DATE_END, config.SPOT_NAMES,
+    cfg.apply_overrides()
+    df = filter_detections(
+        cfg.AGGREGATE_FILE, cfg.EBIRD_FILE,
+        cfg.DATE_START, cfg.DATE_END, cfg.SPOT_NAMES,
     )
     if df.empty:
         print("ERROR: No data after filtering.")
         return
-    run_heatmaps(df, config.OUTPUT_DIR_02_HEATMAPS)
+    run_heatmaps(df, cfg.OUTPUT_DIR_02_HEATMAPS)
 
 
 if __name__ == "__main__":

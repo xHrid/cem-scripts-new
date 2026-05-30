@@ -19,8 +19,8 @@ except ImportError:
     ASTRAL_AVAILABLE = False
     print("WARNING: 'astral' not installed. Using fallback sunrise/sunset estimation.")
 
-from importlib import import_module
-config = import_module("00_config")
+import config as cfg
+from filter_utils import filter_detections
 
 
 # =============================================================================
@@ -31,7 +31,7 @@ def run_solar_correlation(df, output_dir):
 
     daily_counts = df.groupby(["common_name", "Date_Only"]).size().reset_index(name="daily_count")
     daily_counts = daily_counts[daily_counts["daily_count"] > 10]
-    valid_birds = daily_counts["common_name"].value_counts()[lambda x: x > config.MIN_SOLAR_DAYS].index
+    valid_birds = daily_counts["common_name"].value_counts()[lambda x: x > cfg.MIN_SOLAR_DAYS].index
     daily_counts = daily_counts[daily_counts["common_name"].isin(valid_birds)]
 
     filtered = df.merge(
@@ -51,8 +51,8 @@ def run_solar_correlation(df, output_dir):
 
     sun_data = []
     if ASTRAL_AVAILABLE:
-        city = LocationInfo(config.LOCATION_NAME, "India", config.TIMEZONE_STR, config.LATITUDE, config.LONGITUDE)
-        tz = pytz.timezone(config.TIMEZONE_STR)
+        city = LocationInfo(cfg.LOCATION_NAME, "India", cfg.TIMEZONE_STR, cfg.LATITUDE, cfg.LONGITUDE)
+        tz = pytz.timezone(cfg.TIMEZONE_STR)
         for d in date_range:
             try:
                 sr = sunrise(city.observer, date=d.date(), tzinfo=tz)
@@ -113,14 +113,15 @@ def run_solar_correlation(df, output_dir):
 # MAIN
 # =============================================================================
 def main():
-    df = config.filter_detections(
-        config.AGGREGATE_FILE, config.EBIRD_FILE,
-        config.DATE_START, config.DATE_END, config.SPOT_NAMES,
+    cfg.apply_overrides()
+    df = filter_detections(
+        cfg.AGGREGATE_FILE, cfg.EBIRD_FILE,
+        cfg.DATE_START, cfg.DATE_END, cfg.SPOT_NAMES,
     )
     if df.empty:
         print("ERROR: No data after filtering.")
         return
-    run_solar_correlation(df, config.OUTPUT_DIR_08_SOLAR)
+    run_solar_correlation(df, cfg.OUTPUT_DIR_08_SOLAR)
 
 
 if __name__ == "__main__":

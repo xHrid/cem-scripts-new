@@ -12,8 +12,8 @@ import seaborn as sns
 from scipy.stats import spearmanr
 import os
 
-from importlib import import_module
-config = import_module("00_config")
+import config as cfg
+from filter_utils import filter_detections
 
 ACTIVITY_HOURS = range(0, 24)
 
@@ -83,9 +83,9 @@ def run_analysis(df, output_dir):
     combined.to_csv(os.path.join(output_dir, "all_species_activity_regularity.csv"), index=False)
 
     # Plot
-    top = combined.head(config.TOP_N_TEMPORAL)
+    top = combined.head(cfg.TOP_N_TEMPORAL)
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(22, 14))
-    fig.suptitle(f"Activity Regularity: Top {config.TOP_N_TEMPORAL} Species", fontsize=16, fontweight="bold")
+    fig.suptitle(f"Activity Regularity: Top {cfg.TOP_N_TEMPORAL} Species", fontsize=16, fontweight="bold")
 
     sns.barplot(x="Activity_Regularity", y="label", data=top, palette="plasma", ax=ax1)
     ax1.set_title("Activity Regularity (Predictability)")
@@ -109,14 +109,15 @@ def run_analysis(df, output_dir):
 # MAIN
 # =============================================================================
 def main():
-    df = config.filter_detections(
-        config.AGGREGATE_FILE, config.EBIRD_FILE,
-        config.DATE_START, config.DATE_END, config.SPOT_NAMES,
+    cfg.apply_overrides()
+    df = filter_detections(
+        cfg.AGGREGATE_FILE, cfg.EBIRD_FILE,
+        cfg.DATE_START, cfg.DATE_END, cfg.SPOT_NAMES,
     )
     if df.empty:
         print("ERROR: No data after filtering.")
         return
-    run_analysis(df, config.OUTPUT_DIR_03_TEMPORAL)
+    run_analysis(df, cfg.OUTPUT_DIR_03_TEMPORAL)
 
 
 if __name__ == "__main__":
