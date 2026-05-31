@@ -38,12 +38,20 @@ def filter_detections(
     df = pd.read_csv(aggregate_path)
     print(f"Loaded aggregate: {len(df)} rows")
 
-    # -- Preprocessing: extract Spot & Date from filename --
-    df["Spot"] = df["filename"].str.extract(
-        r"^([A-Za-z][A-Za-z0-9_-]*)_\d{8}_", expand=False
-    ).str.lower()
-    date_info = df["filename"].str.extract(r"_(\d{8})_")
-    df["Date"] = pd.to_datetime(date_info[0], format="%Y%m%d", errors="coerce")
+    # -- Preprocessing: use the unified metadata columns (spot, date) written by
+    #    birdnet via file_metadata. Decouples analysis from raw filenames and
+    #    honours the attached spot of reference imports. Falls back to parsing
+    #    the filename only if those columns are absent.
+    if "spot" in df.columns and "date" in df.columns:
+        df["Spot"] = df["spot"].astype(str).str.strip().str.lower()
+        df["Date"] = pd.to_datetime(df["date"], errors="coerce")
+    else:
+        from file_metadata import build_record
+        recs = df["filename"].apply(lambda fn: build_record(str(fn)))
+        df["Spot"] = recs.apply(lambda r: (r["spot"] or "")).str.lower()
+        df["Date"] = pd.to_datetime(recs.apply(lambda r: r["date"]), errors="coerce")
+
+    df = df[~df["Spot"].isin(["", "nan", "none"])]
     df.dropna(subset=["Spot", "Date"], inplace=True)
     df["Date_Only"] = df["Date"].dt.date
 

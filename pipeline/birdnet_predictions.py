@@ -31,36 +31,12 @@ from birdnetlib.main import RecordingBuffer
 from birdnetlib.analyzer import Analyzer
 
 import config as cfg
-
-# Filename pattern: SPOTNAME_YYYYMMDD_HHMMSS.wav
-_FILENAME_RE = re.compile(
-    r"^(?P<spot>[A-Za-z][A-Za-z0-9_-]*)_"
-    r"(?P<year>\d{4})(?P<month>\d{2})(?P<day>\d{2})_"
-    r"(?P<hour>\d{2})(?P<minute>\d{2})(?P<second>\d{2})\.wav$",
-    re.IGNORECASE,
-)
+from file_metadata import parse_filename, build_record  # unified, source-agnostic
 
 
 # =============================================================================
 # PART 1 — FILE LISTING
 # =============================================================================
-def parse_filename(filename: str) -> dict | None:
-    m = _FILENAME_RE.match(filename)
-    if not m:
-        return None
-    month, day = int(m.group("month")), int(m.group("day"))
-    hour, minute, second = int(m.group("hour")), int(m.group("minute")), int(m.group("second"))
-    if not (1 <= month <= 12 and 1 <= day <= 31):
-        return None
-    if not (0 <= hour <= 23 and 0 <= minute <= 59 and 0 <= second <= 59):
-        return None
-    try:
-        file_date = date(int(m.group("year")), month, day)
-    except ValueError:
-        return None
-    return {"spot": m.group("spot"), "date": file_date, "hour": hour, "filename": filename}
-
-
 def list_files(
     input_directories: list[str],
     date_start: date,
@@ -190,17 +166,22 @@ def _init_worker(noise_path, rain_path, tflite_threads):
         _worker_rain = librosa.resample(y=_worker_rain, orig_sr=rain_sr, target_sr=cfg.TARGET_SR)
 
 
-def _process_single_file(filepath):
-    filename = os.path.basename(filepath)
-    parsed = parse_filename(filename)
-    hour = parsed["hour"] if parsed else None
+def _process_single_file(item):
+    # item = (filepath, spot_override). spot_override is the spot a reference file
+    # is attached to (passed from the UI); "" / None means derive spot from the
+    # filename. hour always comes from the filename (name_YYYYMMDD_HHMMSS).
+    filepath, spot_override = item
+    # Unified metadata: filename parse + attached-spot override in one place.
+    rec = build_record(filepath, spot=spot_override)
+    filename = rec["filename"]
     try:
         df = _analyze_file(filepath, _worker_analyzer, _worker_noise, _worker_rain)
         if not df.empty:
-            df["filename"] = filename
-            df["filepath"] = filepath
-            df["hour"] = hour
-            df["spot"] = parsed["spot"] if parsed else ""
+            df["filename"] = rec["filename"]
+            df["filepath"] = rec["filepath"]
+            df["spot"]     = rec["spot"]
+            df["date"]     = rec["date"]   # ISO YYYY-MM-DD
+            df["hour"]     = rec["hour"]
             if "common_name" in df.columns and "label" not in df.columns:
                 df["label"] = df["common_name"]
             return filename, df
@@ -223,7 +204,8 @@ def save_processed_files(path: str, filenames: set[str]):
             f.write(fname + "\n")
 
 
-def run_pipeline(file_list, aggregate_path, processed_files_path):
+def run_pipeline(file_list, aggregate_path, processed_files_path, spot_overrides=None):
+    spot_overrides = spot_overrides or {}   # {basename: spot_name}
     if not file_list:
         print("No new files to process.")
         return pd.DataFrame()
@@ -242,7 +224,8 @@ def run_pipeline(file_list, aggregate_path, processed_files_path):
         initializer=_init_worker,
         initargs=(cfg.STATIC_NOISE_PATH, cfg.RAIN_NOISE_PATH, threads_per),
     ) as executor:
-        futures = {executor.submit(_process_single_file, fp): fp for fp in file_list}
+        items = [(fp, spot_overrides.get(os.path.basename(fp))) for fp in file_list]
+        futures = {executor.submit(_process_single_file, it): it[0] for it in items}
         with tqdm(total=len(file_list), desc="BirdNET") as pbar:
             for future in as_completed(futures):
                 filename, result = future.result()
@@ -269,7 +252,9 @@ def run_pipeline(file_list, aggregate_path, processed_files_path):
 # =============================================================================
 # PART 3 — OUTPUT CSV
 # =============================================================================
-def write_output_csv(aggregate_path, output_path, input_directories, date_start, date_end):
+def write_output_csv(aggregate_path, output_path, input_directories, date_start, date_end,
+                     reference_basenames=None):
+    reference_basenames = set(reference_basenames or ())
     if not os.path.isfile(aggregate_path):
         print("No aggregate file found.")
         return
@@ -281,12 +266,23 @@ def write_output_csv(aggregate_path, output_path, input_directories, date_start,
 
     if "filepath" in df.columns:
         abs_dirs = [os.path.abspath(d) for d in input_directories]
-        df = df[df["filepath"].apply(
+        in_dirs = df["filepath"].apply(
             lambda fp: not pd.isna(fp) and any(os.path.abspath(str(fp)).startswith(d + os.sep) for d in abs_dirs)
-        )]
+        )
+        # Reference files live OUTSIDE input_directories — keep them too so their
+        # detections (with hour + spot) appear in the output CSV.
+        in_refs = df["filename"].isin(reference_basenames) if "filename" in df.columns else False
+        df = df[in_dirs | in_refs]
 
-    if "filename" in df.columns:
-        df = df[df["filename"].apply(lambda fn: (p := parse_filename(str(fn))) is not None and date_start <= p["date"] <= date_end)]
+    # Date filter on the unified `date` column (name-agnostic); fall back to
+    # parsing the filename only if the column is missing.
+    if "date" in df.columns:
+        dser = pd.to_datetime(df["date"], errors="coerce").dt.date
+        df = df[dser.notna() & (dser >= date_start) & (dser <= date_end)]
+    elif "filename" in df.columns:
+        df = df[df["filename"].apply(
+            lambda fn: (p := parse_filename(str(fn))) is not None and date_start <= p["date"] <= date_end
+        )]
 
     if df.empty:
         print("No detections match requested directories + date range.")
@@ -310,10 +306,21 @@ def main():
         input_file_list=cfg.INPUT_FILE_LIST,
     )
 
+    # Map reference-file basename -> attached spot (aligned INPUT_FILE_LIST/SPOTS).
+    spot_overrides = {}
+    ref_basenames = set()
+    spots_aligned = list(cfg.INPUT_FILE_SPOTS) + [""] * (len(cfg.INPUT_FILE_LIST) - len(cfg.INPUT_FILE_SPOTS))
+    for pth, sp in zip(cfg.INPUT_FILE_LIST, spots_aligned):
+        base = os.path.basename(os.path.abspath(pth))
+        ref_basenames.add(base)
+        if sp:
+            spot_overrides[base] = sp
+
     run_pipeline(
         file_list=files_to_process,
         aggregate_path=cfg.AGGREGATE_FILE,
         processed_files_path=cfg.PROCESSED_FILE,
+        spot_overrides=spot_overrides,
     )
 
     write_output_csv(
@@ -322,6 +329,7 @@ def main():
         input_directories=cfg.INPUT_DIRECTORIES,
         date_start=cfg.DATE_START,
         date_end=cfg.DATE_END,
+        reference_basenames=ref_basenames,
     )
 
 

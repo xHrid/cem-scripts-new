@@ -18,6 +18,7 @@ SPOT_NAMES: list[str] = []          # empty = all spots; or ["crimespot3", "crim
 DATE_START: date = date(2025, 11, 1)
 DATE_END:   date = date(2025, 12, 31)
 INPUT_FILE_LIST: list[str] = []     # explicit WAV paths to always include (birdnet only)
+INPUT_FILE_SPOTS: list[str] = []    # spot name per INPUT_FILE_LIST entry, aligned 1:1 ("" = derive from filename)
 
 # =============================================================================
 # PATHS — set once for your environment
@@ -104,6 +105,7 @@ def apply_overrides(argv=None) -> None:
     p = argparse.ArgumentParser(add_help=False)
     p.add_argument("--datasets", nargs="*", default=None)
     p.add_argument("--input-file-list", nargs="*", default=None)
+    p.add_argument("--input-file-spots", nargs="*", default=None)
     p.add_argument("--aggregate-file", default=None)
     p.add_argument("--processed-file", default=None)
     p.add_argument("--output-csv", default=None)
@@ -120,6 +122,7 @@ def apply_overrides(argv=None) -> None:
     g = globals()
     if args.datasets:         g["INPUT_DIRECTORIES"] = list(args.datasets)
     if args.input_file_list:  g["INPUT_FILE_LIST"] = list(args.input_file_list)
+    if args.input_file_spots: g["INPUT_FILE_SPOTS"] = ["" if s == "_" else s for s in args.input_file_spots]
     if args.aggregate_file:   g["AGGREGATE_FILE"] = args.aggregate_file
     if args.processed_file:   g["PROCESSED_FILE"] = args.processed_file
     if args.ebird_file:       g["EBIRD_FILE"] = args.ebird_file

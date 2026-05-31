@@ -22,7 +22,7 @@
     "depends_on": [],
     "outputs": { "master_csv": "birdnet_results.csv" },
     "aggregate_file": "birdnet_results.csv",
-    "assets": ["config.py", "static_noise.wav", "rain_noise.wav"]
+    "assets": ["config.py", "file_metadata.py", "static_noise.wav", "rain_noise.wav"]
   },
   {
     "id": "heatmaps",
@@ -36,7 +36,7 @@
     "depends_on": ["birdnet"],
     "outputs": {},
     "aggregate_file": "birdnet_results.csv",
-    "assets": ["config.py", "filter_utils.py", "ebird_checklist.txt"]
+    "assets": ["config.py", "file_metadata.py", "filter_utils.py", "ebird_checklist.txt"]
   },
   {
     "id": "temporal_stickiness",
@@ -50,7 +50,7 @@
     "depends_on": ["birdnet"],
     "outputs": {},
     "aggregate_file": "birdnet_results.csv",
-    "assets": ["config.py", "filter_utils.py", "ebird_checklist.txt"]
+    "assets": ["config.py", "file_metadata.py", "filter_utils.py", "ebird_checklist.txt"]
   },
   {
     "id": "spatial_stickiness",
@@ -64,7 +64,7 @@
     "depends_on": ["birdnet"],
     "outputs": {},
     "aggregate_file": "birdnet_results.csv",
-    "assets": ["config.py", "filter_utils.py", "ebird_checklist.txt"]
+    "assets": ["config.py", "file_metadata.py", "filter_utils.py", "ebird_checklist.txt"]
   },
   {
     "id": "migratory_classification",
@@ -78,7 +78,7 @@
     "depends_on": ["birdnet"],
     "outputs": {},
     "aggregate_file": "birdnet_results.csv",
-    "assets": ["config.py", "filter_utils.py", "ebird_checklist.txt"]
+    "assets": ["config.py", "file_metadata.py", "filter_utils.py", "ebird_checklist.txt"]
   },
   {
     "id": "solar_correlation",
@@ -92,7 +92,7 @@
     "depends_on": ["birdnet"],
     "outputs": {},
     "aggregate_file": "birdnet_results.csv",
-    "assets": ["config.py", "filter_utils.py", "ebird_checklist.txt"]
+    "assets": ["config.py", "file_metadata.py", "filter_utils.py", "ebird_checklist.txt"]
   },
   {
     "id": "daily_timeseries",
@@ -106,6 +106,6 @@
     "depends_on": ["birdnet"],
     "outputs": {},
     "aggregate_file": "birdnet_results.csv",
-    "assets": ["config.py", "filter_utils.py", "ebird_checklist.txt"]
+    "assets": ["config.py", "file_metadata.py", "filter_utils.py", "ebird_checklist.txt"]
   }
 ]
