@@ -31,8 +31,9 @@ import re
 from datetime import date as _date
 
 # Song Meter / CEM convention: SPOT_YYYYMMDD_HHMMSS.<ext>  (24h clock)
+# Spot label may start with a digit (e.g. recorder serials like "04213SPOT1").
 _FILENAME_RE = re.compile(
-    r"^(?P<spot>[A-Za-z][A-Za-z0-9_-]*)_"
+    r"^(?P<spot>[A-Za-z0-9][A-Za-z0-9_-]*)_"
     r"(?P<year>\d{4})(?P<month>\d{2})(?P<day>\d{2})_"
     r"(?P<hour>\d{2})(?P<minute>\d{2})(?P<second>\d{2})"
     r"\.[A-Za-z0-9]+$",
