@@ -277,8 +277,13 @@ def write_output_csv(aggregate_path, output_path, input_directories, date_start,
     # Date filter on the unified `date` column (name-agnostic); fall back to
     # parsing the filename only if the column is missing.
     if "date" in df.columns:
-        dser = pd.to_datetime(df["date"], errors="coerce").dt.date
-        df = df[dser.notna() & (dser >= date_start) & (dser <= date_end)]
+        # Compare datetime64 vs pandas Timestamps (never mix datetime64 with
+        # python date objects — that raises InvalidComparison). End is inclusive
+        # of the whole day via [start, end+1day).
+        dts = pd.to_datetime(df["date"], errors="coerce")
+        start_ts = pd.Timestamp(date_start)
+        end_ts = pd.Timestamp(date_end) + pd.Timedelta(days=1)
+        df = df[dts.notna() & (dts >= start_ts) & (dts < end_ts)]
     elif "filename" in df.columns:
         df = df[df["filename"].apply(
             lambda fn: (p := parse_filename(str(fn))) is not None and date_start <= p["date"] <= date_end
