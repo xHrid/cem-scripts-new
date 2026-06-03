@@ -9,4 +9,4 @@ seaborn
 birdnetlib
 astral
 pytz
-tensorflow
+tensorflow-cpu  # CPU-only: ~250MB vs 1.7GB, same `tensorflow` namespace birdnetlib needs
